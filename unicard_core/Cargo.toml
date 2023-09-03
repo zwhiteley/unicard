@@ -1,0 +1,12 @@
+[package]
+name = "unicard_core"
+version = "0.1.0"
+authors = ["Zachary Whiteley <z.n.whiteley@gmail.com>"]
+description = "The core crate of unicard which handles data structures and the plugin system"
+repository = "https://github.com/zwhiteley/unicard"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
