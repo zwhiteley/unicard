@@ -54,8 +54,6 @@ pub struct GameModule {
 ///
 /// * An `info` field which contains a [`GameInfo`] table.
 ///
-/// Additional fields may cause issues.
-///
 /// # Example
 ///
 /// ```toml
@@ -69,6 +67,14 @@ pub struct GameModule {
 /// # Remarks
 ///
 /// The Game Module binary may contain additional metadata in certain circumstances.
+///
+/// Future `GameManifest` versions are guaranteed to be backwards compatible with this version
+/// (i.e., future version may only add additional fields, they may not modify/remove pre-existing
+/// fields). To further support compatibility, Unicard runtimes are required to ignore additional,
+/// unexpected fields (so they can load future `GameManifest`s, which contain additional fields).
+///
+/// Game Module developers should not add their own custom fields, as such fields may be
+/// used in future Unicard versions.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename = "manifest")]
 pub struct GameManifest {
@@ -349,6 +355,92 @@ impl GameModule {
     #[inline]
     pub fn manifest(&self) -> &GameManifest {
         &self.manifest
+    }
+}
+
+impl GameManifest {
+    /// Retrieve the `GameManifest` from a [Game Module file](GameModule#format).
+    ///
+    /// The purpose of this function is to allow a manifest file to be loaded without loading
+    /// the corresponding binary (which could be several hundred mebibytes in size). This allows
+    /// large numbers of manifest to be loaded (e.g., for a loading screen) without needlessly
+    /// wasting resources for the binary files.
+    ///
+    /// # Remarks
+    ///
+    /// This function will load Game Modules which target unsupported Unicard APIs (i.e., it
+    /// will never return [`InvalidGameModuleError`]). To check if the associated Game Module
+    /// targets a supported Unicard API, see [`GameManifest::is_supported`].
+    pub fn from_module_file(module_file: impl Read + Seek) -> Result<Self, InvalidGameModuleError> {
+        let mut zip_archive = match ZipArchive::new(module_file) {
+            Ok(zip_archive) => zip_archive,
+            Err(zip_error) => return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
+                // `from_zip_error_no_file` only returns `None` if `zip_error` is
+                // `ZipError::FileNotFound`, which isn't possible when opening an archive
+                // (as we aren't searching for a file!)
+                .expect("no file is being searched for"))
+        };
+
+        let manifest_file = match zip_archive.by_name(GameModule::MANIFEST_NAME) {
+            Ok(manifest_file) => manifest_file,
+            Err(zip_error) => return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
+                .unwrap_or(InvalidGameModuleError::MissingManifest))
+        };
+
+        let size = manifest_file.size();
+        if size > (GameModule::MANIFEST_SIZE_MAX as u64) {
+            return Err(InvalidGameModuleError::ManifestTooLarge);
+        }
+
+        let mut manifest_string = String::with_capacity(size as usize);
+
+        // NOTE: `take` is required here to prevent malformed/malicious zip files from lying
+        //       about their uncompressed size (e.g., providing a value of `1` byte, then providing
+        //       a `10` GiB file).
+        match manifest_file.take(size).read_to_string(&mut manifest_string) {
+            Ok(_) => (),
+            Err(io_error) => return Err(InvalidGameModuleError::Io(io_error))
+        }
+
+        match toml::from_str(&manifest_string) {
+            Ok(manifest) => Ok(manifest),
+            Err(toml_error) => Err(InvalidGameModuleError::InvalidManifest(InvalidManifestError {
+                inner: toml_error
+            }))
+        }
+    }
+
+    /// Check whether the Game Module the `GameManifest` is associated with targets a supported
+    /// Unicard API.
+    ///
+    /// The result of this function is guaranteed to be equal to the result of
+    /// [`self.info.api_version.is_supported()`](ApiVersion::is_supported):
+    ///
+    /// ```rust
+    /// # /*
+    /// use std::fs::File;
+    /// # */
+    /// use unicard_core::module::GameManifest;
+    /// # use unicard_core::module::*;
+    /// # /*
+    ///
+    /// let game_manifest_file = File::open("my_module.ugm").unwrap();
+    /// let game_manifest = GameManifest::from_game_module(game_manifest_file).unwrap();
+    /// # */
+    /// # let game_manifest = GameManifest {
+    /// #     info: GameInfo {
+    /// #         id: GameId::from_u128(1),
+    /// #         name: String::new(),
+    /// #         api_version: ApiVersion::from_u32(1).unwrap(),
+    /// #         game_version: GameVersion::from_tuple((1, 0, 0))
+    /// #     }
+    /// # };
+    ///
+    /// assert_eq!(game_manifest.is_supported(), game_manifest.info.api_version.is_supported());
+    /// ```
+    #[inline]
+    pub fn is_supported(&self) -> bool {
+        self.info.api_version.is_supported()
     }
 }
 
@@ -833,7 +925,7 @@ fn numeric_identifier(ascii_str: &[u8]) -> Result<(u32, &[u8]), ()> {
 
     // Shamelessly stolen from the `semver` crate
     while let Some(&digit) = ascii_str.get(len) {
-        if digit.is_ascii_digit() {
+        if !digit.is_ascii_digit() {
             break;
         }
         if value == 0 && len > 0 {
@@ -1179,7 +1271,7 @@ mod tests {
                 id = "2A9D41B7763C3ED87B2EAD3FBDF793FB"
                 name = "test"
                 game_version = "1.0.0"
-                api_version = 2
+                api_version = 1
             "#).expect("failed to write manifest");
 
             zip.start_file(GameModule::BINARY_NAME, options)
@@ -1189,7 +1281,98 @@ mod tests {
             zip.finish().expect("failed to write changes");
         }
 
-        let _ = GameModule::new(Cursor::new(&zip_bytes[..]))
+        let game_module = GameModule::new(Cursor::new(&zip_bytes[..]))
             .expect("game module creation to be successful");
+
+        assert_eq!(game_module.manifest().info.id, GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB));
+        assert_eq!(game_module.manifest().info.name, "test".to_string());
+        assert_eq!(game_module.manifest().info.game_version, GameVersion::from_tuple((1, 0, 0)));
+        assert_eq!(game_module.manifest().info.api_version, ApiVersion::from_u32(1).unwrap());
+    }
+
+    #[test]
+    fn game_module_stream_additional_fields() {
+        use std::io::Cursor;
+
+        let mut zip_bytes = Vec::new();
+        {
+            use std::io::{Write, Cursor};
+            use zip::{ZipWriter, write::FileOptions};
+
+            let mut zip = ZipWriter::new(Cursor::new(&mut zip_bytes));
+            let options = FileOptions::default();
+
+            zip.start_file(GameModule::MANIFEST_NAME, options)
+                .expect("failed to create manifest file");
+            zip.write(br#"
+                [info]
+                id = "2A9D41B7763C3ED87B2EAD3FBDF793FB"
+                name = "test"
+                game_version = "1.0.0"
+                api_version = 1
+                additional_field = "HELLO THERE!"
+
+                [cheese]
+                pizza = true
+
+                [[my_thing]]
+                a = 1
+
+                [[my_thing]]
+                a = 2
+            "#).expect("failed to write manifest");
+
+            zip.start_file(GameModule::BINARY_NAME, options)
+                .expect("failed to create binary file");
+            zip.write(b"(module)").expect("failed to write binary");
+
+            zip.finish().expect("failed to write changes");
+        }
+
+        let game_module = GameModule::new(Cursor::new(&zip_bytes[..]))
+            .expect("game module creation to be successful");
+
+        assert_eq!(game_module.manifest().info.id, GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB));
+        assert_eq!(game_module.manifest().info.name, "test".to_string());
+        assert_eq!(game_module.manifest().info.game_version, GameVersion::from_tuple((1, 0, 0)));
+        assert_eq!(game_module.manifest().info.api_version, ApiVersion::from_u32(1).unwrap());
+    }
+
+    #[test]
+    fn game_module_stream_manifest_only() {
+        use std::io::Cursor;
+
+        let mut zip_bytes = Vec::new();
+        {
+            use std::io::{Write, Cursor};
+            use zip::{ZipWriter, write::FileOptions};
+
+            let mut zip = ZipWriter::new(Cursor::new(&mut zip_bytes));
+            let options = FileOptions::default();
+
+            zip.start_file(GameModule::MANIFEST_NAME, options)
+                .expect("failed to create manifest file");
+            zip.write(br#"
+                [info]
+                id = "2A9D41B7763C3ED87B2EAD3FBDF793FB"
+                name = "test"
+                game_version = "1.0.0"
+                api_version = 5
+            "#).expect("failed to write manifest");
+
+            zip.start_file(GameModule::BINARY_NAME, options)
+                .expect("failed to create binary file");
+            zip.write(b"(module)").expect("failed to write binary");
+
+            zip.finish().expect("failed to write changes");
+        }
+
+        let manifest = GameManifest::from_module_file(Cursor::new(&zip_bytes[..]))
+            .expect("game module creation to be successful");
+
+        assert_eq!(manifest.info.id, GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB));
+        assert_eq!(manifest.info.name, "test".to_string());
+        assert_eq!(manifest.info.game_version, GameVersion::from_tuple((1, 0, 0)));
+        assert_eq!(manifest.info.api_version, ApiVersion::from_u32(5).unwrap());
     }
 }
