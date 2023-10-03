@@ -4,7 +4,7 @@ use std::num::{IntErrorKind, NonZeroU32};
 use serde::de::{Unexpected, Visitor};
 use serde::ser::SerializeTuple;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use wasmtime::{Engine, Error, Module};
+use wasmtime::Error;
 use zip::result::ZipError;
 use zip::ZipArchive;
 
@@ -40,8 +40,8 @@ pub struct GameModule {
     /// The manifest of the Game Module.
     manifest: GameManifest,
 
-    /// The WASM module.
-    module: WasmModule,
+    /// The bytes of the Game Module binary.
+    binary_bytes: Vec<u8>
 }
 
 /// The manifest of a Game Module.
@@ -82,7 +82,6 @@ pub struct GameManifest {
     pub info: GameInfo,
 }
 
-//noinspection ALL,SpellCheckingInspection
 /// The primary information about a Game Module.
 ///
 /// # TOML format
@@ -113,7 +112,7 @@ pub struct GameManifest {
 ///
 /// ```toml
 /// info = {
-///     id = "2A9D41B7763C3ED87B2EAD3FBDF793FB",
+///     id = "2A9D41B7763C3ED87B2EAD3AFAF793FB",
 ///     name = "example",
 ///     game_version = "1.2.0",
 ///     api_version = 1
@@ -166,7 +165,7 @@ pub struct GameInfo {
     ///
     /// It is possible for a malicious user to deliberately copy the unique identifier of another
     /// Game Module (e.g., to cause inconvenience to the players of the Game Module) -- as a result,
-    /// the uniqueness of the unique identifier should not be relied upon as a saferty or security
+    /// the uniqueness of the unique identifier should not be relied upon as a safety or security
     /// invariant.
     ///
     /// # Remarks
@@ -237,11 +236,6 @@ pub struct GameInfo {
     pub api_version: ApiVersion,
 }
 
-/// A WASM module.
-pub struct WasmModule {
-    module: Module,
-}
-
 impl GameModule {
     /// The name of [manifest file](GameModule#format) within the Game Module zip file.
     pub const MANIFEST_NAME: &'static str = "manifest.toml";
@@ -304,7 +298,7 @@ impl GameModule {
             }
         };
 
-        let module: WasmModule = {
+        let binary_bytes: Vec<u8> = {
             let binary_file = match module_archive.by_name(Self::BINARY_NAME) {
                 Ok(file) => file,
                 Err(zip_error) => return Err(
@@ -320,35 +314,25 @@ impl GameModule {
 
             // NOTE: `Self::MANIFEST_SIZE_MAX` is guaranteed to be below `2^32`, meaning it should
             //       always be convertible to a `usize` (assuming `usize` is at least 32 bits).
-            let mut module_bytes = Vec::with_capacity(size as usize);
+            let mut binary_bytes = Vec::with_capacity(size as usize);
 
             // NOTE: `take` is required here to prevent `manifest_file.size()` from being
             //       incorrect (e.g., setting the size to `1` byte and supplying a `1GiB` file)
-            match binary_file.take(size).read_to_end(&mut module_bytes) {
+            match binary_file.take(size).read_to_end(&mut binary_bytes) {
                 Ok(_) => (),
                 Err(io_error) => return Err(InvalidGameModuleError::Io(io_error))
             }
 
-            match WasmModule::new(module_bytes) {
-                Ok(module) => module,
-                Err(wasm_error) => return Err(
-                    InvalidGameModuleError::InvalidWasmBinary(wasm_error)
-                )
-            }
+            binary_bytes
         };
 
-        Self::from_parts(manifest, module)
-            .ok_or(InvalidGameModuleError::UnsupportedApi)
+        Ok(Self::from_parts(manifest, binary_bytes))
     }
 
-    /// Create a new Game Module from raw information.
-    pub fn from_parts(manifest: GameManifest, module: WasmModule) -> Option<Self> {
-        // Verify the API version to ensure it is supported
-        if !manifest.info.api_version.is_supported() {
-            return None;
-        }
-
-        Some(Self { manifest, module })
+    /// Create a `GameModule` from its individual components.
+    #[inline]
+    pub fn from_parts(manifest: GameManifest, binary_bytes: Vec<u8>) -> Self {
+        Self { manifest, binary_bytes }
     }
 
     /// The manifest of the Game Module.
@@ -441,23 +425,6 @@ impl GameManifest {
     #[inline]
     pub fn is_supported(&self) -> bool {
         self.info.api_version.is_supported()
-    }
-}
-
-impl WasmModule {
-    /// Create a new `WasmModule` from a binary-encoded WASM module.
-    ///
-    /// Returns [`Err(InvalidWasmModuleError)`](Err) if `module_bytes` is malformed.
-    #[inline]
-    pub fn new(module_bytes: impl AsRef<[u8]>) -> Result<Self, InvalidWasmModuleError> {
-        // Create the module
-        let engine = Engine::default();
-        let module = match Module::new(&engine, module_bytes) {
-            Ok(module) => module,
-            Err(inner) => return Err(InvalidWasmModuleError { inner })
-        };
-
-        Ok(WasmModule { module })
     }
 }
 
@@ -1032,16 +999,6 @@ pub enum InvalidGameModuleError {
     /// when the binary file is larger than what can reasonably be expected.
     BinaryTooLarge,
 
-    /// The Unicard API the Game Module uses is not supported by the runtime.
-    ///
-    /// # Remarks
-    ///
-    /// This can occur for two reasons:
-    ///
-    /// * The runtime is outdated (and does not support a newer Unicard API version).
-    /// * The Unicard API is deprecated (i.e., support for the API version has been removed).
-    UnsupportedApi,
-
     /// The `manifest.toml` file is invalid (e.g., invalid TOML, invalid value, etc).
     ///
     /// A Game Module file is, put simply, a zip archive with a few files.
@@ -1056,7 +1013,7 @@ pub enum InvalidGameModuleError {
     /// Some Unicard runtimes may not support WAT (WebAssembly Text format) -- developers should
     /// ensure a Unicard runtime supports WAT before attempting to waste their time and
     ///  find the syntax error in the `binary` file.
-    InvalidWasmBinary(InvalidWasmModuleError),
+    InvalidWasmBinary(InvalidWasmBinaryError),
 }
 
 impl InvalidGameModuleError {
@@ -1101,7 +1058,6 @@ impl Display for InvalidGameModuleError {
                     f, "zip archive binary file exceeded maximum size of `{}`",
                     GameModule::MANIFEST_SIZE_MAX
                 ),
-            Err::UnsupportedApi => f.write_str("unsupported Unicard API version"),
             Err::InvalidManifest(error) => write!(f, "invalid manifest: {}", error),
             Err::InvalidWasmBinary(error) => write!(f, "invalid WASM binary: {}", error)
         }
@@ -1145,7 +1101,7 @@ impl std::error::Error for InvalidManifestError {
     }
 }
 
-/// The [`binary`](WasmModule) file within the [Game Module file](GameModule#format) is invalid.
+/// The binary file within the [Game Module file](GameModule#format) is invalid.
 ///
 /// # Remarks
 ///
@@ -1153,17 +1109,17 @@ impl std::error::Error for InvalidManifestError {
 /// developers should ensure the Unicard runtime supports WAT before attempting to use it
 /// with said runtime. Production Game Modules should **always** be compiled.
 #[derive(Debug)]
-pub struct InvalidWasmModuleError {
+pub struct InvalidWasmBinaryError {
     inner: Error,
 }
 
-impl Display for InvalidWasmModuleError {
+impl Display for InvalidWasmBinaryError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
     }
 }
 
-impl std::error::Error for InvalidWasmModuleError {
+impl std::error::Error for InvalidWasmBinaryError {
     fn cause(&self) -> Option<&dyn std::error::Error> {
         Some(self.inner.as_ref())
     }
