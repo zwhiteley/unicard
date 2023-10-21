@@ -98,4 +98,3 @@ Cheeseburger?
 
 
 I hardly know her!
-Ih
