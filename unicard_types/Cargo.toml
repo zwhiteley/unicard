@@ -1,0 +1,12 @@
+[package]
+name = "unicard_types"
+version = "0.1.0"
+authors = ["Zachary Whiteley <z.n.whiteley@gmail.com>"]
+description = "Traits and structs for reading/writing to WASM linear memory"
+repository = "https://github.com/zwhiteley/unicard"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[dependencies]
+arrayvec = "0.7.4"
+unicard_types_macro = { path = "../unicard_types_macro" }

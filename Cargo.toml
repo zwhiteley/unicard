@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "unicard_core"
+    "unicard_core",
+    "unicard_types",
+    "unicard_types_macro"
 ]

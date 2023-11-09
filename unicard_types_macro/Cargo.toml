@@ -1,0 +1,20 @@
+[package]
+name = "unicard_types_macro"
+version = "0.1.0"
+authors = ["Zachary Whiteley <z.n.whiteley@gmail.com>"]
+description = "Traits and structs for reading/writing to WASM linear memory"
+repository = "https://github.com/zwhiteley/unicard"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2.0.38"
+quote = "1.0.33"
+proc-macro2 = "1.0.69"
+
+[dev-dependencies]
+trybuild = "1.0.85"
+unicard_types = { path = "../unicard_types" }

@@ -1,0 +1,55 @@
+error[E0277]: the trait bound `*const i32: WasmType` is not satisfied
+ --> tests/ui/enum_test.rs:6:7
+  |
+6 |     B(*const i32),
+  |       ^ the trait `WasmType` is not implemented for `*const i32`
+  |
+  = help: the trait `WasmType` is implemented for `i32`
+
+error[E0277]: the trait bound `File: WasmType` is not satisfied
+ --> tests/ui/enum_test.rs:8:12
+  |
+8 |         x: std::fs::File
+  |            ^^^ the trait `WasmType` is not implemented for `File`
+  |
+  = help: the following other types implement trait `WasmType`:
+            i8
+            i16
+            i32
+            i64
+            u8
+            u16
+            u32
+            u64
+          and $N others
+
+error[E0277]: the trait bound `*const i32: WasmType` is not satisfied
+ --> tests/ui/enum_test.rs:3:10
+  |
+3 | #[derive(WasmType)]
+  |          ^^^^^^^^ the trait `WasmType` is not implemented for `*const i32`
+...
+6 |     B(*const i32),
+  |       - required by a bound introduced by this call
+  |
+  = help: the trait `WasmType` is implemented for `i32`
+
+error[E0277]: the trait bound `File: WasmType` is not satisfied
+ --> tests/ui/enum_test.rs:3:10
+  |
+3 | #[derive(WasmType)]
+  |          ^^^^^^^^ the trait `WasmType` is not implemented for `File`
+...
+8 |         x: std::fs::File
+  |            --- required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `WasmType`:
+            i8
+            i16
+            i32
+            i64
+            u8
+            u16
+            u32
+            u64
+          and $N others

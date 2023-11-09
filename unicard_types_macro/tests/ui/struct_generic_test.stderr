@@ -1,0 +1,5 @@
+error: WasmType does not support generics
+ --> tests/ui/struct_generic_test.rs:4:15
+  |
+4 | pub struct Foo<'a> {
+  |               ^

@@ -1,0 +1,7 @@
+error: the WasmType macro cannot be derived for unions
+ --> tests/ui/union_test.rs:3:10
+  |
+3 | #[derive(WasmType)]
+  |          ^^^^^^^^
+  |
+  = note: this error originates in the derive macro `WasmType` (in Nightly builds, run with -Z macro-backtrace for more info)
