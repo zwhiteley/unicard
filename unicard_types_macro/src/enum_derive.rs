@@ -161,7 +161,7 @@ fn branchify(data_enum: &DataEnum, mut branchifier: impl Branchify) -> TokenStre
     quote!(#( #branches ),*)
 }
 
-/// Derive `WasmType` for an enum.
+/// Derive `WasmType32` for an enum.
 pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
     // we encode the discriminant as a u32, meaning there cannot be more than
     // u32 variants.
@@ -200,13 +200,13 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
             });
 
         quote!(
-            let discriminator = <u32 as ::unicard_types::WasmType>::read(&mut *reader)?;
+            let discriminator = <u32 as ::unicard_types::WasmType32>::read(&mut *reader)?;
 
             ::core::result::Result::Ok(match discriminator {
                 #(
                     #branches
                 ),*,
-                _ => return ::core::result::Result::Err(::unicard_types::WasmMemoryError::invalid_value())
+                _ => return ::core::result::Result::Err(::unicard_types::WasmMemoryError32::invalid_value())
             })
         )
     };
@@ -216,15 +216,15 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
 
         impl Branchify for SizeBranchify {
             fn branchify<'a>(&mut self, discriminator: u32, iterator: impl Iterator<Item=(Ident, &'a Field)>) -> TokenStream {
-                let u32_size = quote!(<u32 as ::unicard_types::WasmType>::size(&#discriminator));
+                let u32_size = quote!(<u32 as ::unicard_types::WasmType32>::size(&#discriminator)?);
                 let sizes = iterator.map(|(ident, field)| {
                     let ty = &field.ty;
                     quote_spanned!(ty.span() =>
-                        <#ty as ::unicard_types::WasmType>::size(&#ident)
+                        .checked_add(<#ty as ::unicard_types::WasmType32>::size(&#ident)?)?
                     )
                 });
 
-                quote!(#u32_size #(+ #sizes)*)
+                quote!(#u32_size #(#sizes)*)
             }
         }
 
@@ -241,11 +241,11 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
 
         impl Branchify for WriteBranchify {
             fn branchify<'a>(&mut self, discriminator: u32, iterator: impl Iterator<Item=(Ident, &'a Field)>) -> TokenStream {
-                let write_u32 = quote!(<u32 as ::unicard_types::WasmType>::write(&#discriminator, &mut *writer)?);
+                let write_u32 = quote!(<u32 as ::unicard_types::WasmType32>::write(&#discriminator, &mut *writer)?);
                 let write_stmts = iterator.map(|(ident, field)| {
                     let ty = &field.ty;
                     quote_spanned!(ty.span() =>
-                        <#ty as ::unicard_types::WasmType>::write(&#ident, &mut *writer)?
+                        <#ty as ::unicard_types::WasmType32>::write(&#ident, &mut *writer)?
                     )
                 });
 
@@ -263,16 +263,16 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
 
     quote!(
         #[automatically_derived]
-        impl ::unicard_types::WasmType for #enum_ident where Self: ::std::marker::Sized {
-            fn read(reader: &mut impl ::unicard_types::WasmReader) -> ::core::result::Result<Self, ::unicard_types::WasmMemoryError> {
+        impl ::unicard_types::WasmType32 for #enum_ident where Self: ::std::marker::Sized {
+            fn read(reader: &mut impl ::unicard_types::WasmReader32) -> ::core::result::Result<Self, ::unicard_types::WasmMemoryError32> {
                 #read_body
             }
 
-            fn size(&self) -> usize {
-                #size_body
+            fn size(&self) -> Option<u32> {
+                Some(#size_body)
             }
 
-            fn write(&self, writer: &mut impl ::unicard_types::WasmWriter) -> ::core::result::Result<(), ::unicard_types::WasmMemoryError> {
+            fn write(&self, writer: &mut impl ::unicard_types::WasmWriter32) -> ::core::result::Result<(), ::unicard_types::WasmMemoryError32> {
                 #write_body
                 ::core::result::Result::Ok(())
             }

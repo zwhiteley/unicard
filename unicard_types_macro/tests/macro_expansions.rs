@@ -1,4 +1,4 @@
-use unicard_types::{WasmType, WasmReader, WasmWriter};
+use unicard_types::{WasmType32, WasmReader32, WasmWriter32};
 use unicard_types_macro::WasmType;
 
 /// A mock WASM reader/allocator/writer.
@@ -23,10 +23,10 @@ impl Mock {
     }
 }
 
-impl WasmReader for Mock {
-    fn read(&mut self, bytes: &mut [u8]) -> Result<(), unicard_types::WasmMemoryError> {
+impl WasmReader32 for Mock {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<(), unicard_types::WasmMemoryError32> {
         if self.memory.len() < (self.cursor + bytes.len()) {
-            return Err(unicard_types::WasmMemoryError::out_of_memory());
+            return Err(unicard_types::WasmMemoryError32::memory_overflow());
         }
 
         bytes.copy_from_slice(&self.memory[self.cursor..(self.cursor + bytes.len())]);
@@ -36,8 +36,8 @@ impl WasmReader for Mock {
     }
 }
 
-impl WasmWriter for Mock {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), unicard_types::WasmMemoryError> {
+impl WasmWriter32 for Mock {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), unicard_types::WasmMemoryError32> {
         self.memory.extend_from_slice(bytes);
         Ok(())
     }
@@ -80,7 +80,7 @@ fn tuple_write() {
 
     tuple.write(&mut writer).expect("write to be successful");
 
-    assert_eq!(tuple.size(), writer.memory.len());
+    assert_eq!(tuple.size(), Some(writer.memory.len() as u32));
 
     let tuple_read = Tuple::read(&mut writer).expect("read to be valid");
     assert_eq!(tuple, tuple_read);
@@ -111,7 +111,7 @@ fn normal_write() {
 
     normal.write(&mut writer).expect("write to be successful");
     assert_eq!(writer.memory.len(), 8 + 11 + 4);
-    assert_eq!(writer.memory.len(), normal.size());
+    assert_eq!(Some(writer.memory.len() as u32), normal.size());
 
     let normal_read = Normal::read(&mut writer).expect("read to be successful");
     assert_eq!(normal_read, normal);
@@ -137,9 +137,9 @@ fn tri_enum_read() {
     assert!(matches!(tri_2, TriEnum::B(2, 3)));
     assert!(matches!(tri_3, TriEnum::C { x: -1 }));
 
-    assert_eq!(tri_1.size(), 4);
-    assert_eq!(tri_2.size(), 4 + 4 + 4);
-    assert_eq!(tri_3.size(), 4 + 1);
+    assert_eq!(tri_1.size(), Some(4));
+    assert_eq!(tri_2.size(), Some(4 + 4 + 4));
+    assert_eq!(tri_3.size(), Some(4 + 1));
 }
 
 #[test]

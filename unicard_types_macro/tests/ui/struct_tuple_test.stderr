@@ -1,29 +1,10 @@
-error[E0277]: the trait bound `File: WasmType` is not satisfied
+error[E0277]: the trait bound `File: WasmType32` is not satisfied
  --> tests/ui/struct_tuple_test.rs:4:29
   |
 4 | struct ContainsInvalidTypes(std::fs::File);
-  |                             ^^^ the trait `WasmType` is not implemented for `File`
+  |                             ^^^^^^^^^^^^^ the trait `WasmType32` is not implemented for `File`
   |
-  = help: the following other types implement trait `WasmType`:
-            i8
-            i16
-            i32
-            i64
-            u8
-            u16
-            u32
-            u64
-          and $N others
-
-error[E0277]: the trait bound `File: WasmType` is not satisfied
- --> tests/ui/struct_tuple_test.rs:3:10
-  |
-3 | #[derive(WasmType)]
-  |          ^^^^^^^^ the trait `WasmType` is not implemented for `File`
-4 | struct ContainsInvalidTypes(std::fs::File);
-  |                             --- required by a bound introduced by this call
-  |
-  = help: the following other types implement trait `WasmType`:
+  = help: the following other types implement trait `WasmType32`:
             i8
             i16
             i32
