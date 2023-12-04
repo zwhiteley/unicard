@@ -27,10 +27,10 @@
 //!
 //! All integer types are guaranteed to have a constant size equal to `std::mem::size_of<T>()`.
 
+use arrayvec::ArrayVec;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
-use arrayvec::ArrayVec;
 
 pub use unicard_types_macro::WasmType;
 
@@ -69,13 +69,12 @@ enum WasmMemoryErrorKind {
     InvalidValue,
 }
 
-
 impl WasmMemoryError32 {
     /// An allocation request for WASM32 memory was too large to fulfil.
     #[inline]
     pub fn alloc_too_large() -> Self {
         Self {
-            kind: WasmMemoryErrorKind::AllocationTooLarge
+            kind: WasmMemoryErrorKind::AllocationTooLarge,
         }
     }
 
@@ -91,7 +90,7 @@ impl WasmMemoryError32 {
     #[inline]
     pub fn memory_overflow() -> Self {
         Self {
-            kind: WasmMemoryErrorKind::MemoryOverflow
+            kind: WasmMemoryErrorKind::MemoryOverflow,
         }
     }
 
@@ -102,7 +101,7 @@ impl WasmMemoryError32 {
     #[inline]
     pub fn invalid_value() -> Self {
         Self {
-            kind: WasmMemoryErrorKind::InvalidValue
+            kind: WasmMemoryErrorKind::InvalidValue,
         }
     }
 }
@@ -112,9 +111,13 @@ impl Display for WasmMemoryError32 {
         use WasmMemoryErrorKind as Kind;
 
         match self.kind {
-            Kind::AllocationTooLarge => f.write_str("there is insufficient WASM32 memory to fulfil the alloc request"),
-            Kind::MemoryOverflow => f.write_str("there is insufficient WASM32 memory to perform this action"),
-            Kind::InvalidValue => f.write_str("WASM32 memory contains an invalid value")
+            Kind::AllocationTooLarge => {
+                f.write_str("there is insufficient WASM32 memory to fulfil the alloc request")
+            }
+            Kind::MemoryOverflow => {
+                f.write_str("there is insufficient WASM32 memory to perform this action")
+            }
+            Kind::InvalidValue => f.write_str("WASM32 memory contains an invalid value"),
         }
     }
 }
@@ -271,7 +274,7 @@ pub trait WasmType32: Sized {
 
 // Derive `WasmType` for numeric types
 macro_rules! derive_type_methods {
-    ($ty:ty) =>  {
+    ($ty:ty) => {
         impl WasmType32 for $ty {
             #[inline]
             fn read(reader: &mut impl WasmReader32) -> Result<Self, WasmMemoryError32> {
@@ -308,8 +311,8 @@ derive_type_methods!(i32);
 derive_type_methods!(i64);
 
 impl<T, const N: usize> WasmType32 for [T; N]
-    where
-        T: WasmType32
+where
+    T: WasmType32,
 {
     #[inline]
     fn read(reader: &mut impl WasmReader32) -> Result<Self, WasmMemoryError32> {
@@ -330,15 +333,14 @@ impl<T, const N: usize> WasmType32 for [T; N]
 
         match stack_vec.into_inner() {
             Ok(array) => Ok(array),
-            Err(_) => unreachable!("stack_vec should be initialised with N elements")
+            Err(_) => unreachable!("stack_vec should be initialised with N elements"),
         }
     }
 
     #[inline]
     fn size(&self) -> Option<u32> {
-        self.iter().try_fold(0u32, |acc, el| {
-            acc.checked_add(el.size()?)
-        })
+        self.iter()
+            .try_fold(0u32, |acc, el| acc.checked_add(el.size()?))
     }
 
     #[inline]
@@ -357,7 +359,8 @@ impl<T, const N: usize> WasmType32 for [T; N]
 // (slices are references, and returning a reference to a stack-allocated object is a no-no
 // in any language).
 impl<T> WasmType32 for Vec<T>
-    where T: WasmType32
+where
+    T: WasmType32,
 {
     #[inline]
     fn read(reader: &mut impl WasmReader32) -> Result<Self, WasmMemoryError32> {
@@ -379,7 +382,7 @@ impl<T> WasmType32 for Vec<T>
         // is because the length of the vector is encoded as a `u32`, meaning any length
         // larger than a `u32` will overflow and cause issues.
         if self.len() as u64 > u32::MAX as u64 {
-            return None
+            return None;
         }
 
         // NOTE: we cannot do self.len() * self[0].size(), as it assumes size is constant across
@@ -387,7 +390,8 @@ impl<T> WasmType32 for Vec<T>
         // right now!)
         // NOTE: the `4` is required as the number of elements is encoded as a `u32` at
         //       the start.
-        self.iter().try_fold(4u32, |acc, el| acc.checked_add(el.size()?))
+        self.iter()
+            .try_fold(4u32, |acc, el| acc.checked_add(el.size()?))
     }
 
     #[inline]
@@ -427,8 +431,7 @@ impl WasmType32 for String {
         // NOTE: if the bytes are not UTF-8, it is considered a problem of
         // the WASM module (i.e., the WASM module is responsible for enforcing
         // the validity of UTF-8 strings).
-        String::from_utf8(bytes)
-            .map_err(|_| WasmMemoryError32::invalid_value())
+        String::from_utf8(bytes).map_err(|_| WasmMemoryError32::invalid_value())
     }
 
     #[inline]
@@ -526,7 +529,7 @@ derive_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);
 impl<K, V> WasmType32 for HashMap<K, V>
 where
     K: Eq + Hash + WasmType32,
-    V: WasmType32
+    V: WasmType32,
 {
     fn read(reader: &mut impl WasmReader32) -> Result<Self, WasmMemoryError32> {
         // Retrieve the number of elements in the map
@@ -635,8 +638,7 @@ mod tests {
     #[test]
     fn wasm_read_vec() {
         let mut mock = Mock::with(&[2, 0, 0, 0, 1, 0, 0, 0, 65, 2, 0, 0, 0, 97, 98]);
-        let vec = Vec::<String>::read(&mut mock)
-            .expect("for read to be successful");
+        let vec = Vec::<String>::read(&mut mock).expect("for read to be successful");
 
         assert_eq!(&vec[0], "A");
         assert_eq!(&vec[1], "ab");
@@ -651,22 +653,13 @@ mod tests {
 
         vec.write(&mut mock).expect("write to be successful");
 
-        assert_eq!(&mock.memory, &[
-            2, 0, 0, 0,
-            10, 0, 0, 0, 8,
-            15, 0, 0, 0, 0
-        ]);
+        assert_eq!(&mock.memory, &[2, 0, 0, 0, 10, 0, 0, 0, 8, 15, 0, 0, 0, 0]);
     }
 
     #[test]
     fn wasm_read_string() {
-        let mut mock = Mock::with(&[
-            8, 0, 0, 0,
-            b'b', b'a', b'c', b'k',
-            b' ', b'f', b'o', b'x'
-        ]);
-        let string = String::read(&mut mock)
-            .expect("read to be successful");
+        let mut mock = Mock::with(&[8, 0, 0, 0, b'b', b'a', b'c', b'k', b' ', b'f', b'o', b'x']);
+        let string = String::read(&mut mock).expect("read to be successful");
 
         assert_eq!(&string, "back fox");
     }
@@ -679,19 +672,13 @@ mod tests {
         assert_eq!(string.size(), Some(9));
 
         string.write(&mut mock).expect("write to be successful");
-        assert_eq!(&mock.memory, &[
-            5, 0, 0, 0,
-            b'B', b'a', b'c', b'k', b'!'
-        ]);
+        assert_eq!(&mock.memory, &[5, 0, 0, 0, b'B', b'a', b'c', b'k', b'!']);
     }
 
     #[test]
     fn wasm_read_array() {
-        let mut mock = Mock::with(&[
-            6, 7, 8, 9
-        ]);
-        let array = <[u8; 4] as WasmType32>::read(&mut mock)
-            .expect("read to be successful");
+        let mut mock = Mock::with(&[6, 7, 8, 9]);
+        let array = <[u8; 4] as WasmType32>::read(&mut mock).expect("read to be successful");
 
         assert_eq!(array, [6, 7, 8, 9]);
     }
@@ -704,22 +691,14 @@ mod tests {
         assert_eq!(array.size(), Some(12));
 
         array.write(&mut mock).expect("write to be successful");
-        assert_eq!(&mock.memory, &[
-            0, 0, 0, 0,
-            1, 0, 0, 0,
-            2, 0, 0, 0
-        ]);
+        assert_eq!(&mock.memory, &[0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]);
     }
 
     #[test]
     fn wasm_read_tuple() {
-        let mut mock = Mock::with(&[
-            254, 255, 255, 255,
-            1, 0, 0, 0, b'=',
-            1, 0, 0, 0, 0
-        ]);
-        let tuple = <(i32, String, Vec<u8>) as WasmType32>::read(&mut mock)
-            .expect("read to be successful");
+        let mut mock = Mock::with(&[254, 255, 255, 255, 1, 0, 0, 0, b'=', 1, 0, 0, 0, 0]);
+        let tuple =
+            <(i32, String, Vec<u8>) as WasmType32>::read(&mut mock).expect("read to be successful");
 
         assert_eq!(tuple.0, -2);
         assert_eq!(&tuple.1, "=");
@@ -734,23 +713,17 @@ mod tests {
         assert_eq!(tuple.size(), Some(15));
 
         tuple.write(&mut mock).expect("write to be successful");
-        assert_eq!(&mock.memory, &[
-            69, 69, 69,
-            1, 0, 0, 0,
-            2, 0, 0, 0,
-            3, 0, 0, 0
-        ]);
+        assert_eq!(
+            &mock.memory,
+            &[69, 69, 69, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0]
+        );
     }
 
     #[test]
     fn wasm_read_hash_map() {
-        let mut mock = Mock::with(&[
-            2, 0, 0, 0,
-            1, 0, 0, 0, b'6', 6,
-            1, 0, 0, 0, b'9', 9
-        ]);
-        let map = <HashMap<String, u8> as WasmType32>::read(&mut mock)
-            .expect("read to be successful");
+        let mut mock = Mock::with(&[2, 0, 0, 0, 1, 0, 0, 0, b'6', 6, 1, 0, 0, 0, b'9', 9]);
+        let map =
+            <HashMap<String, u8> as WasmType32>::read(&mut mock).expect("read to be successful");
 
         assert_eq!(map.get("6").unwrap(), &6);
         assert_eq!(map.get("9").unwrap(), &9);
@@ -775,37 +748,27 @@ mod tests {
         // To avoid this, we run iter ourselves to get an understanding of the order
         // and hence the assertion we must perform.
         if *map.iter().next().unwrap().0 == 18 {
-            assert_eq!(&mock.memory, &[
-                2, 0, 0, 0,
-
-                // KEY 1
-                18, 0, 0, 0,
-
-                // VALUE 1
-                1, 2,
-
-                // KEY 2
-                29, 0, 0, 0,
-
-                // VALUE 2
-                6, 1
-            ]);
+            assert_eq!(
+                &mock.memory,
+                &[
+                    2, 0, 0, 0, // KEY 1
+                    18, 0, 0, 0, // VALUE 1
+                    1, 2, // KEY 2
+                    29, 0, 0, 0, // VALUE 2
+                    6, 1
+                ]
+            );
         } else {
-            assert_eq!(&mock.memory, &[
-                2, 0, 0, 0,
-
-                // KEY 1
-                29, 0, 0, 0,
-
-                // VALUE 1
-                6, 1,
-
-                // KEY 2
-                18, 0, 0, 0,
-
-                // VALUE 2
-                1, 2
-            ]);
+            assert_eq!(
+                &mock.memory,
+                &[
+                    2, 0, 0, 0, // KEY 1
+                    29, 0, 0, 0, // VALUE 1
+                    6, 1, // KEY 2
+                    18, 0, 0, 0, // VALUE 2
+                    1, 2
+                ]
+            );
         }
     }
 
@@ -839,7 +802,9 @@ mod tests {
         // Probably safe -- reading ZSTs should be a no-op, including
         // for ptr::read (meaning ptr::read for an invalid, albeit non-null
         // and properly aligned, address is completely safe for a ZST).
-        unsafe { vec.set_len(vec.capacity()); }
+        unsafe {
+            vec.set_len(vec.capacity());
+        }
 
         assert_eq!(vec.size(), None);
     }

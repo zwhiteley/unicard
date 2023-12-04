@@ -285,7 +285,7 @@ impl GameModule {
                     // `from_zip_error_no_file` only returns `None` if `zip_error` is
                     // `ZipError::FileNotFound`, which isn't possible when opening an archive
                     // (as we aren't searching for a file!)
-                    .expect("no file is being searched for"))
+                    .expect("no file is being searched for"));
             }
         };
 
@@ -418,7 +418,7 @@ impl GameManifest {
                     // `from_zip_error_no_file` only returns `None` if `zip_error` is
                     // `ZipError::FileNotFound`, which isn't possible when opening an archive
                     // (as we aren't searching for a file!)
-                    .expect("no file is being searched for"))
+                    .expect("no file is being searched for"));
             }
         };
 
@@ -1119,7 +1119,7 @@ pub enum InvalidGameModuleError {
     InvalidWasmBinary(InvalidWasmBinaryError),
 
     /// The `binary` file targets an unsupported version of the Unicard API.
-    UnsupportedUnicardApi
+    UnsupportedUnicardApi,
 }
 
 impl InvalidGameModuleError {
@@ -1174,7 +1174,7 @@ impl Display for InvalidGameModuleError {
             ),
             Err::InvalidManifest(_) => f.write_str("the manifest is invalid"),
             Err::InvalidWasmBinary(_) => f.write_str("the inner WASM binary is invalid"),
-            Err::UnsupportedUnicardApi => f.write_str("unsupported unicard API version")
+            Err::UnsupportedUnicardApi => f.write_str("unsupported unicard API version"),
         }
     }
 }

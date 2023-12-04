@@ -1,74 +1,62 @@
-use proc_macro2::{TokenStream, Ident};
+use proc_macro2::{Ident, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{spanned::Spanned, DataStruct, Fields, FieldsNamed, FieldsUnnamed};
 
 fn wasm_tuple_size(fields: &FieldsUnnamed) -> TokenStream {
-    let size_part = fields
-        .unnamed
-        .iter()
-        .enumerate()
-        .map(|(idx, field)| {
-            let idx = syn::Index::from(idx);
-            let ty = &field.ty;
+    let size_part = fields.unnamed.iter().enumerate().map(|(idx, field)| {
+        let idx = syn::Index::from(idx);
+        let ty = &field.ty;
 
-            quote_spanned!(ty.span() =>
-                .checked_add(<#ty as ::unicard_types::WasmType32>::size(&self.#idx)?)?
-            )
-        });
+        quote_spanned!(ty.span() =>
+            .checked_add(<#ty as ::unicard_types::WasmType32>::size(&self.#idx)?)?
+        )
+    });
 
     quote!(0u32 #( #size_part )*)
 }
 
 fn wasm_tuple_write(fields: &FieldsUnnamed) -> TokenStream {
-    let write_field = fields
-        .unnamed
-        .iter()
-        .enumerate()
-        .map(|(idx, field)| {
-            let idx = syn::Index::from(idx);
-            let ty = &field.ty;
+    let write_field = fields.unnamed.iter().enumerate().map(|(idx, field)| {
+        let idx = syn::Index::from(idx);
+        let ty = &field.ty;
 
-            quote_spanned!(ty.span() =>
-                <#ty as ::unicard_types::WasmType32>::write(&self.#idx, &mut *writer)?;
-            )
-        });
+        quote_spanned!(ty.span() =>
+            <#ty as ::unicard_types::WasmType32>::write(&self.#idx, &mut *writer)?;
+        )
+    });
 
     quote!(#( #write_field )*)
 }
 
-
 fn wasm_normal_size(fields: &FieldsNamed) -> TokenStream {
-    let size_part = fields
-        .named
-        .iter()
-        .map(|field| {
-            let ident = field.ident.as_ref().expect("named structs should have named fields");
-            let ty = &field.ty;
+    let size_part = fields.named.iter().map(|field| {
+        let ident = field
+            .ident
+            .as_ref()
+            .expect("named structs should have named fields");
+        let ty = &field.ty;
 
-            quote_spanned!(ty.span() =>
-                .checked_add(<#ty as ::unicard_types::WasmType32>::size(&self.#ident)?)?
-            )
-        });
+        quote_spanned!(ty.span() =>
+            .checked_add(<#ty as ::unicard_types::WasmType32>::size(&self.#ident)?)?
+        )
+    });
 
     quote!(0u32 #( #size_part )*)
 }
 
 fn wasm_normal_write(fields: &FieldsNamed) -> TokenStream {
-    let write_stmt = fields
-        .named
-        .iter()
-        .map(|field| {
-            let ident = field
-                .ident
-                .as_ref()
-                .expect("named struct to have named fields");
+    let write_stmt = fields.named.iter().map(|field| {
+        let ident = field
+            .ident
+            .as_ref()
+            .expect("named struct to have named fields");
 
-            let ty = &field.ty;
+        let ty = &field.ty;
 
-            quote_spanned!(ty.span() =>
-                <#ty as ::unicard_types::WasmType32>::write(&self.#ident, &mut *writer)?;
-            )
-        });
+        quote_spanned!(ty.span() =>
+            <#ty as ::unicard_types::WasmType32>::write(&self.#ident, &mut *writer)?;
+        )
+    });
 
     quote!( #( #write_stmt )* )
 }

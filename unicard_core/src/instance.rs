@@ -1,6 +1,6 @@
+use crate::module::{ApiVersion, GameId, GameManifest, GameModule, GameVersion};
 use std::fmt::{Display, Formatter};
 use wasmtime::{Error, Instance, Store, Trap};
-use crate::module::{ApiVersion, GameId, GameManifest, GameModule, GameVersion};
 
 /// An instance of a Unicard Game Module.
 pub(crate) struct GameInstance<'a> {
@@ -11,7 +11,7 @@ pub(crate) struct GameInstance<'a> {
     store: Store<()>,
 
     /// The WebAssembly instance.
-    instance: Instance
+    instance: Instance,
 }
 
 impl<'a> GameInstance<'a> {
@@ -39,7 +39,7 @@ impl<'a> GameInstance<'a> {
         let mut store = Store::new(game_module.module.engine(), ());
         let instance = match Instance::new(&mut store, &game_module.module, &[]) {
             Ok(instance) => instance,
-            Err(error) => return RuntimeError::from_error(error)
+            Err(error) => return RuntimeError::from_error(error),
         };
 
         // Check the API version first, as that is the only function that is guaranteed to
@@ -47,36 +47,42 @@ impl<'a> GameInstance<'a> {
         let api_version = {
             let fn_api_version = match instance.get_typed_func(&mut store, Self::FN_API_VERSION) {
                 Ok(fnc) => fnc,
-                Err(error) => return Err(RuntimeError::InvalidApi(InvalidApiError(error)))
+                Err(error) => return Err(RuntimeError::InvalidApi(InvalidApiError(error))),
             };
 
             let result: i32 = match fn_api_version.call(&mut store, ()) {
                 Ok(result) => result,
-                Err(error) => return RuntimeError::from_error(error)
+                Err(error) => return RuntimeError::from_error(error),
             };
 
             match ApiVersion::try_from(result as u32) {
                 Ok(value) => value,
-                Err(_) => return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg("api version returned is zero"))))
+                Err(_) => {
+                    return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg(
+                        "api version returned is zero",
+                    ))))
+                }
             }
         };
 
         if api_version != game_module.manifest().info.api_version {
-            return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg("api version does not match that of manifest"))))
+            return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg(
+                "api version does not match that of manifest",
+            ))));
         }
 
         // Check game id and game version
         let game_id = {
             let fn_game_id = match instance.get_typed_func(&mut store, Self::FN_GAME_ID) {
                 Ok(value) => value,
-                Err(error) => return Err(RuntimeError::InvalidApi(InvalidApiError(error)))
+                Err(error) => return Err(RuntimeError::InvalidApi(InvalidApiError(error))),
             };
 
             // NOTE: at the time of writing, neither wasmtime nor Rust has first-class support
             // for v128s, so we use two i64s instead
             let game_id_parts: (i64, i64) = match fn_game_id.call(&mut store, ()) {
                 Ok(value) => value,
-                Err(error) => return RuntimeError::from_error(error)
+                Err(error) => return RuntimeError::from_error(error),
             };
 
             let game_id_hi = u128::from(game_id_parts.0 as u64) << u64::BITS;
@@ -89,12 +95,12 @@ impl<'a> GameInstance<'a> {
         let game_version = {
             let fn_game_version = match instance.get_typed_func(&mut store, Self::FN_GAME_VERSION) {
                 Ok(value) => value,
-                Err(error) => return Err(RuntimeError::InvalidApi(InvalidApiError(error)))
+                Err(error) => return Err(RuntimeError::InvalidApi(InvalidApiError(error))),
             };
 
             let game_version_tuple: (i32, i32, i32) = match fn_game_version.call(&mut store, ()) {
                 Ok(value) => value,
-                Err(error) => return RuntimeError::from_error(error)
+                Err(error) => return RuntimeError::from_error(error),
             };
 
             GameVersion {
@@ -105,16 +111,21 @@ impl<'a> GameInstance<'a> {
         };
 
         if game_id != game_module.manifest().info.id {
-            return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg("game_id does not match manifest"))));
+            return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg(
+                "game_id does not match manifest",
+            ))));
         }
 
         if game_version != game_module.manifest().info.game_version {
-            return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg("game_version does not match manifest"))));
+            return Err(RuntimeError::InvalidApi(InvalidApiError(Error::msg(
+                "game_version does not match manifest",
+            ))));
         }
 
         Ok(Self {
             manifest: game_module.manifest(),
-            store, instance
+            store,
+            instance,
         })
     }
 }
@@ -140,7 +151,7 @@ pub enum RuntimeError {
     /// A host trap occurred.
     ///
     /// This is caused when a function provided by the runtime is used incorrectly.
-    HostTrap(HostTrapError)
+    HostTrap(HostTrapError),
 }
 
 impl RuntimeError {
@@ -165,7 +176,7 @@ impl Display for RuntimeError {
         match self {
             Self::InvalidApi(_) => f.write_str("the API exposed by the binary is invalid"),
             Self::WasmTrap(_) => f.write_str("a runtime trap occurred"),
-            Self::HostTrap(_) => f.write_str("a host trap occurred")
+            Self::HostTrap(_) => f.write_str("a host trap occurred"),
         }
     }
 }
@@ -175,7 +186,7 @@ impl std::error::Error for RuntimeError {
         match self {
             Self::InvalidApi(error) => Some(error),
             Self::WasmTrap(error) => Some(error),
-            Self::HostTrap(error) => Some(error)
+            Self::HostTrap(error) => Some(error),
         }
     }
 }

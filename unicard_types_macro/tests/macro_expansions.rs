@@ -1,24 +1,24 @@
-use unicard_types::{WasmType32, WasmReader32, WasmWriter32};
+use unicard_types::{WasmReader32, WasmType32, WasmWriter32};
 use unicard_types_macro::WasmType;
 
 /// A mock WASM reader/allocator/writer.
 struct Mock {
     cursor: usize,
-    memory: Vec<u8>
+    memory: Vec<u8>,
 }
 
 impl Mock {
     fn new() -> Self {
         Mock {
             cursor: 0,
-            memory: Vec::new()
+            memory: Vec::new(),
         }
     }
 
     fn with(bytes: &[u8]) -> Self {
         Mock {
             cursor: 0,
-            memory: bytes.to_owned()
+            memory: bytes.to_owned(),
         }
     }
 }
@@ -106,7 +106,7 @@ fn normal_write() {
     let mut writer = Mock::new();
     let normal = Normal {
         value: 69,
-        values: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        values: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
     };
 
     normal.write(&mut writer).expect("write to be successful");
@@ -121,9 +121,7 @@ fn normal_write() {
 enum TriEnum {
     A,
     B(u32, u32),
-    C {
-        x: i8
-    }
+    C { x: i8 },
 }
 
 #[test]
@@ -153,5 +151,8 @@ fn tri_enum_write() {
     tri_2.write(&mut writer).expect("write to be valid");
     tri_3.write(&mut writer).expect("write to be valid");
 
-    assert_eq!(&writer.memory, b"\x00\x00\x00\x00\x01\0\0\0\x02\0\0\0\x03\0\0\0\x02\0\0\0\x47");
+    assert_eq!(
+        &writer.memory,
+        b"\x00\x00\x00\x00\x01\0\0\0\x02\0\0\0\x03\0\0\0\x02\0\0\0\x47"
+    );
 }

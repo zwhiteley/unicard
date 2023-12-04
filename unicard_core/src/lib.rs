@@ -1,4 +1,4 @@
 //! # Unicard Core
 
-pub mod module;
 mod instance;
+pub mod module;

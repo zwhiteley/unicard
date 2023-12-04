@@ -1,6 +1,6 @@
-use proc_macro2::{TokenStream, Ident};
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
-use syn::{spanned::Spanned, DataEnum, Fields, Field};
+use syn::{spanned::Spanned, DataEnum, Field, Fields};
 
 /// Convert a variant of an enum to a branch of a match statement.
 ///
@@ -51,7 +51,11 @@ trait Branchify {
     ///
     /// An empty iterator may be passed (e.g., in the case of a unit variant, empty tuple variant,
     /// etc).
-    fn branchify<'a>(&mut self, discriminator: u32, iterator: impl Iterator<Item=(Ident, &'a Field)>) -> TokenStream;
+    fn branchify<'a>(
+        &mut self,
+        discriminator: u32,
+        iterator: impl Iterator<Item = (Ident, &'a Field)>,
+    ) -> TokenStream;
 }
 
 /// Create a body of a match statement from a the definition of an enum.
@@ -83,79 +87,67 @@ trait Branchify {
 /// `#BRANCHIFY_RESULT` is the result of a `branchify` call with `Foo`'s data and a branchifier
 /// to convert each enum into an expression.
 fn branchify(data_enum: &DataEnum, mut branchifier: impl Branchify) -> TokenStream {
-    let branches = data_enum
-        .variants
-        .iter()
-        .enumerate()
-        .map(|(idx, variant)| {
-            // NOTE: we have already checked to ensure the variant count is <= u32::MAX,
-            // so this is fine
-            let discriminator = idx as u32;
-            let var_ident = &variant.ident;
+    let branches = data_enum.variants.iter().enumerate().map(|(idx, variant)| {
+        // NOTE: we have already checked to ensure the variant count is <= u32::MAX,
+        // so this is fine
+        let discriminator = idx as u32;
+        let var_ident = &variant.ident;
 
-            match &variant.fields {
-                Fields::Unit => {
-                    // A unit variant has no fields, so pass an empty iterator
-                    let body = branchifier.branchify(discriminator, std::iter::empty());
-                    quote!(Self::#var_ident => { #body })
-                }
-                Fields::Unnamed(fields) => {
-                    // Create the variable idents to be used for each of the tuple fields
-                    // (e.g., `__field0` for `variant.0`)
-                    let field_iter = fields
-                        .unnamed
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, field)| (
-                            format_ident!("__field{idx}"),
-                            field
-                        ));
-
-                    // Generate the match arm pattern (to bind the tuple parts to variable names
-                    // e.g., `Foo::Baz(__field0, __field1)`)
-                    let pattern = {
-                        let idents = field_iter.clone()
-                            .map(|(ident, _)| ident);
-
-                        quote!(Self::#var_ident( #( #idents ),* ))
-                    };
-
-                    // Use `branchifier` to generate the expression of the match arm
-                    let body = branchifier.branchify(discriminator, field_iter);
-
-                    quote!(#pattern => { #body })
-                }
-                Fields::Named(fields) => {
-                    // Create the variable idents to be used for each of the tuple fields
-                    // (e.g., `__field0` for `variant.inner`)
-                    let field_iter = fields
-                        .named
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, field)| (
-                            format_ident!("__field{idx}"),
-                            field
-                        ));
-
-                    // Generate the match arm pattern which binds to the identifiers created
-                    // above (e.g., `Foo::FooBar { inner: __field0 }`).
-                    let pattern = {
-                        let idents = field_iter.clone()
-                            .map(|(ident, field)| {
-                                let field_ident = &field.ident;
-                                quote!(#field_ident: #ident)
-                            });
-
-                        quote!(Self::#var_ident { #( #idents ),* })
-                    };
-
-                    // Use `branchifier` to generate the match express body
-                    let body = branchifier.branchify(discriminator, field_iter);
-
-                    quote!(#pattern => { #body })
-                }
+        match &variant.fields {
+            Fields::Unit => {
+                // A unit variant has no fields, so pass an empty iterator
+                let body = branchifier.branchify(discriminator, std::iter::empty());
+                quote!(Self::#var_ident => { #body })
             }
-        });
+            Fields::Unnamed(fields) => {
+                // Create the variable idents to be used for each of the tuple fields
+                // (e.g., `__field0` for `variant.0`)
+                let field_iter = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| (format_ident!("__field{idx}"), field));
+
+                // Generate the match arm pattern (to bind the tuple parts to variable names
+                // e.g., `Foo::Baz(__field0, __field1)`)
+                let pattern = {
+                    let idents = field_iter.clone().map(|(ident, _)| ident);
+
+                    quote!(Self::#var_ident( #( #idents ),* ))
+                };
+
+                // Use `branchifier` to generate the expression of the match arm
+                let body = branchifier.branchify(discriminator, field_iter);
+
+                quote!(#pattern => { #body })
+            }
+            Fields::Named(fields) => {
+                // Create the variable idents to be used for each of the tuple fields
+                // (e.g., `__field0` for `variant.inner`)
+                let field_iter = fields
+                    .named
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| (format_ident!("__field{idx}"), field));
+
+                // Generate the match arm pattern which binds to the identifiers created
+                // above (e.g., `Foo::FooBar { inner: __field0 }`).
+                let pattern = {
+                    let idents = field_iter.clone().map(|(ident, field)| {
+                        let field_ident = &field.ident;
+                        quote!(#field_ident: #ident)
+                    });
+
+                    quote!(Self::#var_ident { #( #idents ),* })
+                };
+
+                // Use `branchifier` to generate the match express body
+                let body = branchifier.branchify(discriminator, field_iter);
+
+                quote!(#pattern => { #body })
+            }
+        }
+    });
 
     // Aggregate the match arms into a match body
     quote!(#( #branches ),*)
@@ -215,7 +207,11 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
         struct SizeBranchify;
 
         impl Branchify for SizeBranchify {
-            fn branchify<'a>(&mut self, discriminator: u32, iterator: impl Iterator<Item=(Ident, &'a Field)>) -> TokenStream {
+            fn branchify<'a>(
+                &mut self,
+                discriminator: u32,
+                iterator: impl Iterator<Item = (Ident, &'a Field)>,
+            ) -> TokenStream {
                 let u32_size = quote!(<u32 as ::unicard_types::WasmType32>::size(&#discriminator)?);
                 let sizes = iterator.map(|(ident, field)| {
                     let ty = &field.ty;
@@ -240,7 +236,11 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
         struct WriteBranchify;
 
         impl Branchify for WriteBranchify {
-            fn branchify<'a>(&mut self, discriminator: u32, iterator: impl Iterator<Item=(Ident, &'a Field)>) -> TokenStream {
+            fn branchify<'a>(
+                &mut self,
+                discriminator: u32,
+                iterator: impl Iterator<Item = (Ident, &'a Field)>,
+            ) -> TokenStream {
                 let write_u32 = quote!(<u32 as ::unicard_types::WasmType32>::write(&#discriminator, &mut *writer)?);
                 let write_stmts = iterator.map(|(ident, field)| {
                     let ty = &field.ty;
@@ -279,4 +279,3 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
         }
     )
 }
-

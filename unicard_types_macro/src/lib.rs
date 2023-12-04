@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote_spanned;
-use syn::{Data, DeriveInput, parse_macro_input};
 use syn::spanned::Spanned;
+use syn::{parse_macro_input, Data, DeriveInput};
 
 mod shared;
 
@@ -22,7 +22,7 @@ fn wasm_type(input: DeriveInput) -> TokenStream {
     if !input.generics.params.is_empty() {
         return quote_spanned!(
             input.generics.span() => ::std::compile_error!("WasmType does not support generics");
-        )
+        );
     }
 
     // NOTE: as this is an internal macro, we do not need to support crate renaming
