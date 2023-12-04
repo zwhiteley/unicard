@@ -32,6 +32,8 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use arrayvec::ArrayVec;
 
+pub use unicard_types_macro::WasmType;
+
 /// An error occurred whilst allocating, reading from, or writing to WASM32 memory.
 ///
 /// The primary reason for this error is due to a lack of memory (e.g., `read_u64` was
@@ -334,8 +336,8 @@ impl<T, const N: usize> WasmType32 for [T; N]
 
     #[inline]
     fn size(&self) -> Option<u32> {
-        self.iter().fold(Some(0), |acc, el| {
-            acc?.checked_add(el.size()?)
+        self.iter().try_fold(0u32, |acc, el| {
+            acc.checked_add(el.size()?)
         })
     }
 
@@ -385,7 +387,7 @@ impl<T> WasmType32 for Vec<T>
         // right now!)
         // NOTE: the `4` is required as the number of elements is encoded as a `u32` at
         //       the start.
-        self.iter().fold(Some(4), |acc, el| acc?.checked_add(el.size()?))
+        self.iter().try_fold(4u32, |acc, el| acc.checked_add(el.size()?))
     }
 
     #[inline]
@@ -457,6 +459,7 @@ macro_rules! derive_tuple {
         // as the separator) to avoid ambiguity (i.e., `(T,)` is a tuple, `(T)` is
         // treated as `T`.
         #[automatically_derived]
+        #[allow(clippy::needless_question_mark)]
         impl<$($generic),+> WasmType32 for ($($generic,)+)
         where
             $( $generic: WasmType32 ),+
@@ -557,11 +560,10 @@ where
             return None;
         }
 
-        self.iter().fold(Some(0u32), |acc, (k, v)| {
-            let acc = acc?.checked_add(k.size()?);
-            let acc = acc?.checked_add(v.size()?);
-            acc
-        })?.checked_add(4u32.size()?)
+        self.iter().try_fold(4u32, |acc, (k, v)| {
+            let acc = acc.checked_add(k.size()?)?;
+            acc.checked_add(v.size()?)
+        })
     }
 
     fn write(&self, writer: &mut impl WasmWriter32) -> Result<(), WasmMemoryError32> {

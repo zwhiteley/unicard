@@ -1,10 +1,10 @@
-use std::fmt::{Display, Formatter, Write};
-use std::io::{self, Read, Seek};
-use std::num::{IntErrorKind, NonZeroU32};
 use serde::de::{Unexpected, Visitor};
 use serde::ser::SerializeTuple;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use wasmtime::Error;
+use std::fmt::{Display, Formatter, Write};
+use std::io::{self, Read, Seek};
+use std::num::{IntErrorKind, NonZeroU32};
+use wasmtime::{Error, Module};
 use zip::result::ZipError;
 use zip::ZipArchive;
 
@@ -35,13 +35,23 @@ use zip::ZipArchive;
 ///
 /// The binary file may expose methods which provide information about the Game Module (e.g., an
 /// `api_version` function which returns the Unicard API function the Game Module uses), despite
-/// it being detailed in the manifest file
+/// it being detailed in the manifest file.
+///
+/// Creating a `GameModule` is an expensive operation -- if only the manifest is required,
+/// use [`GameManifest::from_module_file`] instead.
 pub struct GameModule {
     /// The manifest of the Game Module.
     manifest: GameManifest,
 
-    /// The bytes of the Game Module binary.
-    binary_bytes: Vec<u8>
+    /// The compiled Game Module binary.
+    ///
+    /// # Remarks
+    ///
+    /// We include it directly as a [`Module`], and not a [`Vec<u8>`](Vec), as an optimisation:
+    /// compiling a module is very expensive, so doing it once and storing the compiled result
+    /// is much more efficient than storing the bytes and making a separate compilation for
+    /// each instantiation.
+    pub(crate) module: Module,
 }
 
 /// The manifest of a Game Module.
@@ -66,7 +76,8 @@ pub struct GameModule {
 ///
 /// # Remarks
 ///
-/// The Game Module binary may contain additional metadata in certain circumstances.
+/// The Game Module binary may contain additional metadata, including metadata already detailed
+/// in the manifest, in certain circumstances.
 ///
 /// Future `GameManifest` versions are guaranteed to be backwards compatible with this version
 /// (i.e., future version may only add additional fields, they may not modify/remove pre-existing
@@ -124,11 +135,11 @@ pub struct GameManifest {
 /// Astute users may realise that the Game Module binary also contains functions which return
 /// the values of the game id, game version, and API version fields respectively -- the purpose of
 /// the `id`, `game_version`, and `api_version` fields is to provide a way for the runtime to
-/// determine version compatibility without having to instantiate the binary and execute
-/// these functions (as doing so can be expensive).
+/// determine version compatibility without having to compile and instantiate the binary, and
+/// execute these functions (as doing so can be expensive).
 ///
 /// Runtimes may impose additional restrictions on the `name` field (e.g., maximum length,
-/// forbidden characters, etc).
+/// forbidden characters, etc), and may sanitise `name`s which do not comply with them.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename = "info")]
 pub struct GameInfo {
@@ -198,7 +209,7 @@ pub struct GameInfo {
     /// As with all other `info` fields, there is no security mechanism in place to ensure this
     /// field is used correctly (e.g., a breaking update without a major version bump, a new
     /// update with the same `game_version` as the previous update, etc) and, as a result, should
-    /// not be relied upon as a security invariant.
+    /// not be relied upon as a safety or security invariant.
     ///
     /// # Remarks
     ///
@@ -220,7 +231,7 @@ pub struct GameInfo {
     ///
     /// As with all other `info` fields, there are no security mechanisms in place to
     /// ensure that the `api_version` is valid (e.g., that it matches the binary) and, as a result,
-    /// it should not be relied upon as a security invariant.
+    /// it should not be relied upon as a safety or security invariant.
     ///
     /// # Remarks
     ///
@@ -252,26 +263,40 @@ impl GameModule {
     /// Create a new Game Module from a Unicard Game Module file.
     ///
     /// See [GameModule#format] for the format of a Game Module file.
+    ///
+    /// # Remarks
+    ///
+    /// This operation is expensive, as it involves compiling the WASM binary contained within
+    /// the Unicard Game Module. If you require a quick extraction of the [`GameManifest`]
+    /// contained within the Unicard Game Module, see [`GameManifest::from_module_file`] instead.
+    ///
+    /// If the Game Module file targets an unsupported version of the Unicard API, it will
+    /// return an error: even though it is perfectly possible for an unsupported Game Module
+    /// to be loaded, there is little point in wasting memory and time compiling a WASM binary
+    /// that will never be instantiated.
+    ///
+    /// If you want to read the manifest from a Unicard Game Module, even if the Game Module
+    /// targets an unsupported API, see [`GameManifest::from_module_file`].
     pub fn new(module_file: impl Read + Seek) -> Result<Self, InvalidGameModuleError> {
         let mut module_archive = match ZipArchive::new(module_file) {
             Ok(archive) => archive,
-            Err(zip_error) => return Err(
-                InvalidGameModuleError::from_zip_error_no_file(zip_error)
+            Err(zip_error) => {
+                return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
                     // `from_zip_error_no_file` only returns `None` if `zip_error` is
                     // `ZipError::FileNotFound`, which isn't possible when opening an archive
                     // (as we aren't searching for a file!)
-                    .expect("no file is being searched for")
-            )
+                    .expect("no file is being searched for"))
+            }
         };
 
         // Read the manifest
         let manifest: GameManifest = {
             let manifest_file = match module_archive.by_name(Self::MANIFEST_NAME) {
                 Ok(file) => file,
-                Err(zip_error) => return Err(
-                    InvalidGameModuleError::from_zip_error_no_file(zip_error)
-                        .unwrap_or(InvalidGameModuleError::MissingManifest)
-                )
+                Err(zip_error) => {
+                    return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
+                        .unwrap_or(InvalidGameModuleError::MissingManifest))
+                }
             };
 
             let size = manifest_file.size();
@@ -285,26 +310,38 @@ impl GameModule {
 
             // NOTE: `take` is required here to prevent `manifest_file.size()` from being
             //       incorrect (e.g., setting the size to `1` byte and supplying a `1GiB` file)
-            match manifest_file.take(size).read_to_string(&mut manifest_string) {
+            match manifest_file
+                .take(size)
+                .read_to_string(&mut manifest_string)
+            {
                 Ok(_) => (),
-                Err(io_error) => return Err(InvalidGameModuleError::Io(io_error))
+                Err(io_error) => return Err(InvalidGameModuleError::Io(io_error)),
             }
 
             match toml::from_str(&manifest_string) {
                 Ok(manifest) => manifest,
-                Err(error) => return Err(InvalidGameModuleError::InvalidManifest(InvalidManifestError {
-                    inner: error
-                }))
+                Err(error) => {
+                    return Err(InvalidGameModuleError::InvalidManifest(
+                        InvalidManifestError { inner: error },
+                    ))
+                }
             }
         };
+
+        // If the Game Module targets an unsupported version of the Unicard API, there is little
+        // point loading and compiling the Game Module, as the user will never be able to
+        // instantiate it
+        if !manifest.is_supported() {
+            return Err(InvalidGameModuleError::UnsupportedUnicardApi);
+        }
 
         let binary_bytes: Vec<u8> = {
             let binary_file = match module_archive.by_name(Self::BINARY_NAME) {
                 Ok(file) => file,
-                Err(zip_error) => return Err(
-                    InvalidGameModuleError::from_zip_error_no_file(zip_error)
-                        .unwrap_or(InvalidGameModuleError::MissingBinary)
-                )
+                Err(zip_error) => {
+                    return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
+                        .unwrap_or(InvalidGameModuleError::MissingBinary))
+                }
             };
 
             let size = binary_file.size();
@@ -320,19 +357,36 @@ impl GameModule {
             //       incorrect (e.g., setting the size to `1` byte and supplying a `1GiB` file)
             match binary_file.take(size).read_to_end(&mut binary_bytes) {
                 Ok(_) => (),
-                Err(io_error) => return Err(InvalidGameModuleError::Io(io_error))
+                Err(io_error) => return Err(InvalidGameModuleError::Io(io_error)),
             }
 
             binary_bytes
         };
 
-        Ok(Self::from_parts(manifest, binary_bytes))
+        Self::from_parts(manifest, binary_bytes)
     }
 
     /// Create a `GameModule` from its individual components.
+    ///
+    /// # Remarks
+    ///
+    /// This is an expensive operation and should only be performed if necessary.
     #[inline]
-    pub fn from_parts(manifest: GameManifest, binary_bytes: Vec<u8>) -> Self {
-        Self { manifest, binary_bytes }
+    pub fn from_parts(
+        manifest: GameManifest,
+        binary_bytes: impl AsRef<[u8]>,
+    ) -> Result<Self, InvalidGameModuleError> {
+        let engine = Default::default();
+        let module = match Module::new(&engine, binary_bytes) {
+            Ok(module) => module,
+            Err(error) => {
+                return Err(InvalidGameModuleError::InvalidWasmBinary(
+                    InvalidWasmBinaryError { inner: error },
+                ))
+            }
+        };
+
+        Ok(Self { manifest, module })
     }
 
     /// The manifest of the Game Module.
@@ -347,28 +401,33 @@ impl GameManifest {
     ///
     /// The purpose of this function is to allow a manifest file to be loaded without loading
     /// the corresponding binary (which could be several hundred mebibytes in size). This allows
-    /// large numbers of manifest to be loaded (e.g., for a loading screen) without needlessly
+    /// large numbers of manifest to be loaded (e.g., for a selection screen) without needlessly
     /// wasting resources for the binary files.
     ///
     /// # Remarks
     ///
     /// This function will load Game Modules which target unsupported Unicard APIs (i.e., it
-    /// will never return [`InvalidGameModuleError`]). To check if the associated Game Module
-    /// targets a supported Unicard API, see [`GameManifest::is_supported`].
+    /// will never return [`InvalidGameModuleError::UnsupportedUnicardApi`]).
+    /// To check if the associated Game Module targets a supported Unicard API,
+    /// see [`GameManifest::is_supported`].
     pub fn from_module_file(module_file: impl Read + Seek) -> Result<Self, InvalidGameModuleError> {
         let mut zip_archive = match ZipArchive::new(module_file) {
             Ok(zip_archive) => zip_archive,
-            Err(zip_error) => return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
-                // `from_zip_error_no_file` only returns `None` if `zip_error` is
-                // `ZipError::FileNotFound`, which isn't possible when opening an archive
-                // (as we aren't searching for a file!)
-                .expect("no file is being searched for"))
+            Err(zip_error) => {
+                return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
+                    // `from_zip_error_no_file` only returns `None` if `zip_error` is
+                    // `ZipError::FileNotFound`, which isn't possible when opening an archive
+                    // (as we aren't searching for a file!)
+                    .expect("no file is being searched for"))
+            }
         };
 
         let manifest_file = match zip_archive.by_name(GameModule::MANIFEST_NAME) {
             Ok(manifest_file) => manifest_file,
-            Err(zip_error) => return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
-                .unwrap_or(InvalidGameModuleError::MissingManifest))
+            Err(zip_error) => {
+                return Err(InvalidGameModuleError::from_zip_error_no_file(zip_error)
+                    .unwrap_or(InvalidGameModuleError::MissingManifest))
+            }
         };
 
         let size = manifest_file.size();
@@ -381,16 +440,19 @@ impl GameManifest {
         // NOTE: `take` is required here to prevent malformed/malicious zip files from lying
         //       about their uncompressed size (e.g., providing a value of `1` byte, then providing
         //       a `10` GiB file).
-        match manifest_file.take(size).read_to_string(&mut manifest_string) {
+        match manifest_file
+            .take(size)
+            .read_to_string(&mut manifest_string)
+        {
             Ok(_) => (),
-            Err(io_error) => return Err(InvalidGameModuleError::Io(io_error))
+            Err(io_error) => return Err(InvalidGameModuleError::Io(io_error)),
         }
 
         match toml::from_str(&manifest_string) {
             Ok(manifest) => Ok(manifest),
-            Err(toml_error) => Err(InvalidGameModuleError::InvalidManifest(InvalidManifestError {
-                inner: toml_error
-            }))
+            Err(toml_error) => Err(InvalidGameModuleError::InvalidManifest(
+                InvalidManifestError { inner: toml_error },
+            )),
         }
     }
 
@@ -471,11 +533,15 @@ pub struct GameId(u128);
 impl GameId {
     /// Create a new Game Module ID from a `u128`.
     #[inline]
-    pub fn from_u128(id: u128) -> Self { Self(id) }
+    pub fn from_u128(id: u128) -> Self {
+        Self(id)
+    }
 
     /// Retrieve the inner `u128`.
     #[inline]
-    pub fn to_u128(self) -> u128 { self.0 }
+    pub fn to_u128(self) -> u128 {
+        self.0
+    }
 }
 
 impl From<u128> for GameId {
@@ -499,7 +565,10 @@ impl Display for GameId {
 }
 
 impl Serialize for GameId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         serializer.serialize_str(&self.to_string())
     }
 }
@@ -507,7 +576,10 @@ impl Serialize for GameId {
 // NOTE: `#[serde(TryFrom = "&str", Into = "String")]` was tried initially, however, the `toml`
 // crate only supported owned strings for `TryFrom` (which seemed like an unnecessary tradeoff)
 impl<'de> Deserialize<'de> for GameId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         struct GameIdVisitor;
 
         impl<'de> Visitor<'de> for GameIdVisitor {
@@ -517,29 +589,30 @@ impl<'de> Deserialize<'de> for GameId {
                 formatter.write_str("a unique Game identifier")
             }
 
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: serde::de::Error {
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
                 match u128::from_str_radix(v, 16) {
                     Ok(id_num) => Ok(GameId(id_num)),
                     Err(error) => match *error.kind() {
-                        IntErrorKind::InvalidDigit => Err(
-                            E::invalid_value(Unexpected::Str(v), &self)
-                        ),
-                        IntErrorKind::PosOverflow => Err(
-                            E::custom("unique identifier does not fit into a 128-bit integer")
-                        ),
-                        IntErrorKind::NegOverflow => Err(
-                            E::custom("unique Game identifier needs to be an unsigned integer")
-                        ),
-                        IntErrorKind::Empty => Err(
-                            E::invalid_value(Unexpected::Str(v), &self)
-                        ),
+                        IntErrorKind::InvalidDigit => {
+                            Err(E::invalid_value(Unexpected::Str(v), &self))
+                        }
+                        IntErrorKind::PosOverflow => Err(E::custom(
+                            "unique identifier does not fit into a 128-bit integer",
+                        )),
+                        IntErrorKind::NegOverflow => Err(E::custom(
+                            "unique Game identifier needs to be an unsigned integer",
+                        )),
+                        IntErrorKind::Empty => Err(E::invalid_value(Unexpected::Str(v), &self)),
 
                         // We are not parsing a `NonZeroU*` numeric
                         IntErrorKind::Zero => unreachable!(),
 
                         // enum is non_exhaustive
-                        _ => Err(E::invalid_value(Unexpected::Str(v), &self))
-                    }
+                        _ => Err(E::invalid_value(Unexpected::Str(v), &self)),
+                    },
                 }
             }
         }
@@ -547,7 +620,6 @@ impl<'de> Deserialize<'de> for GameId {
         deserializer.deserialize_str(GameIdVisitor)
     }
 }
-
 
 /// A Unicard API version.
 ///
@@ -557,7 +629,7 @@ impl<'de> Deserialize<'de> for GameId {
 ///
 /// It is difficult to design a flawless API, especially during the first few attempts.
 /// `ApiVersion` exists to allow new, improved (and likely incompatible) Unicard API versions
-/// to be developed whilst preserving the ability to use older Game Modules (which use the older
+/// to be developed whilst preserving the ability to run older Game Modules (which use the older
 /// API versions).
 ///
 /// `ApiVersion` does this by recording the version number of the Unicard API the Game Module
@@ -570,7 +642,9 @@ impl<'de> Deserialize<'de> for GameId {
 ///
 /// `ApiVersion` makes no backwards compatibility guarantees (meaning a `v2` Game Module
 /// may not run on a `v1` runtime, and vice-versa). The only guarantee is that a runtime and
-/// Game Module which both target the same `ApiVersion` are guaranteed to be compatible.
+/// Game Module which both target the same `ApiVersion` are guaranteed to be compatible, and that
+/// all Game Modules expose an `api_version() -> u32` function, irrespective of Unicard API
+/// version.
 ///
 /// # Serde Format
 ///
@@ -589,7 +663,8 @@ impl<'de> Deserialize<'de> for GameId {
 /// Providing an incorrect `ApiVersion` will likely cause the Game Module to break (as the runtime
 /// will interact with it differently).
 // NOTE: a struct was used instead of an enum as it is impossible to have an exhaustive list
-//       of all Unicard API versions, even at compile time
+//       of all Unicard API versions, even at compile time, as the program may have been
+//       written before a new Unicard API version is released
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct ApiVersion(pub NonZeroU32);
@@ -607,7 +682,7 @@ impl ApiVersion {
     pub fn from_u32(api_version_num: u32) -> Result<Self, InvalidApiVersionError> {
         let api_version_num = match NonZeroU32::new(api_version_num) {
             Some(api_version_num) => api_version_num,
-            None => return Err(InvalidApiVersionError)
+            None => return Err(InvalidApiVersionError),
         };
 
         Ok(Self(api_version_num))
@@ -669,7 +744,20 @@ impl Display for ApiVersion {
 
 /// An invalid Unicard API version number was provided.
 ///
-/// The only invalid Unicard API version is `0` -- all other `u32` values are valid.
+/// The only invalid Unicard API version is `0` -- all other `u32` values are valid (even if
+/// the Unicard API version hasn't been released yet!)
+///
+/// # Remarks
+///
+/// The reason unreleased Unicard API versions are valid is due to the inability to verify the
+/// existence of a Unicard API version: in order for such a check to be possible, a centralised
+/// web server containing all Unicard API versions would need to be created, and a request
+/// sent to that server to verify the API version, which brings privacy, maintainability, and
+/// accessibility concerns.
+///
+/// With the current solution (where all Unicard API versions, except `0`, are valid), the worst
+/// thing that can happen is the user provides an unreleased Unicard API version number, and gets
+/// told that the Game Module is unsupported.
 #[derive(Debug, Copy, Clone)]
 pub struct InvalidApiVersionError;
 
@@ -801,7 +889,10 @@ impl Display for GameVersion {
 }
 
 impl Serialize for GameVersion {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         if serializer.is_human_readable() {
             serializer.serialize_str(&format!("{}", self))
         } else {
@@ -815,7 +906,10 @@ impl Serialize for GameVersion {
 }
 
 impl<'de> Deserialize<'de> for GameVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         struct GameVersionReadableVisitor;
         impl<'de> Visitor<'de> for GameVersionReadableVisitor {
             type Value = GameVersion;
@@ -824,12 +918,15 @@ impl<'de> Deserialize<'de> for GameVersion {
                 formatter.write_str("version string `X.Y.Z`")
             }
 
-            fn visit_str<E>(self, original: &str) -> Result<Self::Value, E> where E: serde::de::Error {
-                fn invalid_val<T, E: serde::de::Error>(vis: &GameVersionReadableVisitor, v: &str) -> Result<T, E> {
-                    Err(E::invalid_value(
-                        Unexpected::Str(v),
-                        vis,
-                    ))
+            fn visit_str<E>(self, original: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                fn invalid_val<T, E: serde::de::Error>(
+                    vis: &GameVersionReadableVisitor,
+                    v: &str,
+                ) -> Result<T, E> {
+                    Err(E::invalid_value(Unexpected::Str(v), vis))
                 }
 
                 // A version number can only be composed of the digits 0-9 and a `.`,  which
@@ -866,7 +963,11 @@ impl<'de> Deserialize<'de> for GameVersion {
                     return invalid_val(&self, original);
                 }
 
-                Ok(GameVersion { major, minor, patch })
+                Ok(GameVersion {
+                    major,
+                    minor,
+                    patch,
+                })
             }
         }
 
@@ -903,7 +1004,7 @@ fn numeric_identifier(ascii_str: &[u8]) -> Result<(u32, &[u8]), ()> {
             .and_then(|value| value.checked_add((digit - b'0') as u32))
         {
             Some(sum) => value = sum,
-            None => return Err(())
+            None => return Err(()),
         }
         len += 1;
     }
@@ -921,7 +1022,9 @@ fn numeric_identifier(ascii_str: &[u8]) -> Result<(u32, &[u8]), ()> {
 fn dot(ascii_str: &[u8]) -> Result<&[u8], ()> {
     if let Some(rest) = ascii_str.strip_prefix(b".") {
         Ok(rest)
-    } else { Err(()) }
+    } else {
+        Err(())
+    }
 }
 
 /// The [Game Module file](GameModule#format) was invalid.
@@ -1014,6 +1117,9 @@ pub enum InvalidGameModuleError {
     /// ensure a Unicard runtime supports WAT before attempting to waste their time and
     ///  find the syntax error in the `binary` file.
     InvalidWasmBinary(InvalidWasmBinaryError),
+
+    /// The `binary` file targets an unsupported version of the Unicard API.
+    UnsupportedUnicardApi
 }
 
 impl InvalidGameModuleError {
@@ -1030,7 +1136,7 @@ impl InvalidGameModuleError {
             ZipError::InvalidArchive(_) => Self::InvalidZip,
             ZipError::UnsupportedArchive(ZipError::PASSWORD_REQUIRED) => Self::EncryptedZip,
             ZipError::UnsupportedArchive(_) => Self::UnsupportedZip,
-            ZipError::FileNotFound => return None
+            ZipError::FileNotFound => return None,
         })
     }
 }
@@ -1042,37 +1148,46 @@ impl Display for InvalidGameModuleError {
         f.write_str("invalid game module error: ")?;
 
         match self {
-            Err::Io(io_error) => write!(f, "io error: {}", io_error),
+            Err::Io(_) => f.write_str("an io error occurred"),
             Err::InvalidZip => f.write_str("invalid zip archive"),
             Err::UnsupportedZip => f.write_str("unsupported zip archive format"),
             Err::EncryptedZip => f.write_str("zip archive is encrypted"),
-            Err::MissingManifest => write!(f, "zip archive missing manifest file `{}`", GameModule::MANIFEST_NAME),
-            Err::MissingBinary => write!(f, "zip archive missing WASM binary file `{}`", GameModule::BINARY_NAME),
-            Err::ManifestTooLarge =>
-                write!(
-                    f, "zip archive manifest file exceeded maximum size of `{}`",
-                    GameModule::MANIFEST_SIZE_MAX
-                ),
-            Err::BinaryTooLarge =>
-                write!(
-                    f, "zip archive binary file exceeded maximum size of `{}`",
-                    GameModule::MANIFEST_SIZE_MAX
-                ),
-            Err::InvalidManifest(error) => write!(f, "invalid manifest: {}", error),
-            Err::InvalidWasmBinary(error) => write!(f, "invalid WASM binary: {}", error)
+            Err::MissingManifest => write!(
+                f,
+                "zip archive missing manifest file `{}`",
+                GameModule::MANIFEST_NAME
+            ),
+            Err::MissingBinary => write!(
+                f,
+                "zip archive missing WASM binary file `{}`",
+                GameModule::BINARY_NAME
+            ),
+            Err::ManifestTooLarge => write!(
+                f,
+                "zip archive manifest file exceeded maximum size of `{}`",
+                GameModule::MANIFEST_SIZE_MAX
+            ),
+            Err::BinaryTooLarge => write!(
+                f,
+                "zip archive binary file exceeded maximum size of `{}`",
+                GameModule::MANIFEST_SIZE_MAX
+            ),
+            Err::InvalidManifest(_) => f.write_str("the manifest is invalid"),
+            Err::InvalidWasmBinary(_) => f.write_str("the inner WASM binary is invalid"),
+            Err::UnsupportedUnicardApi => f.write_str("unsupported unicard API version")
         }
     }
 }
 
 impl std::error::Error for InvalidGameModuleError {
-    fn cause(&self) -> Option<&dyn std::error::Error> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use InvalidGameModuleError as Err;
 
         match self {
             Err::Io(error) => Some(error),
             Err::InvalidManifest(error) => Some(error),
             Err::InvalidWasmBinary(error) => Some(error),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -1083,7 +1198,6 @@ impl std::error::Error for InvalidGameModuleError {
 ///
 /// * Invalid TOML.
 /// * Invalid values (e.g., provided a number instead of a string).
-/// * Unnecessary fields.
 #[derive(Debug)]
 pub struct InvalidManifestError {
     inner: toml::de::Error,
@@ -1146,13 +1260,16 @@ mod tests {
     fn gv_comp_ser() {
         fn t(tup: (u32, u32, u32)) {
             let game_ver: GameVersion = tup.into();
-            assert_tokens(&game_ver.compact(), &[
-                Token::Tuple { len: 3 },
-                Token::U32(tup.0),
-                Token::U32(tup.1),
-                Token::U32(tup.2),
-                Token::TupleEnd
-            ]);
+            assert_tokens(
+                &game_ver.compact(),
+                &[
+                    Token::Tuple { len: 3 },
+                    Token::U32(tup.0),
+                    Token::U32(tup.1),
+                    Token::U32(tup.2),
+                    Token::TupleEnd,
+                ],
+            );
         }
 
         t((1, 23, 23));
@@ -1214,21 +1331,24 @@ mod tests {
 
         let mut zip_bytes = Vec::new();
         {
-            use std::io::{Write, Cursor};
-            use zip::{ZipWriter, write::FileOptions};
+            use std::io::{Cursor, Write};
+            use zip::{write::FileOptions, ZipWriter};
 
             let mut zip = ZipWriter::new(Cursor::new(&mut zip_bytes));
             let options = FileOptions::default();
 
             zip.start_file(GameModule::MANIFEST_NAME, options)
                 .expect("failed to create manifest file");
-            zip.write(br#"
+            zip.write(
+                br#"
                 [info]
                 id = "2A9D41B7763C3ED87B2EAD3FBDF793FB"
                 name = "test"
                 game_version = "1.0.0"
                 api_version = 1
-            "#).expect("failed to write manifest");
+            "#,
+            )
+            .expect("failed to write manifest");
 
             zip.start_file(GameModule::BINARY_NAME, options)
                 .expect("failed to create binary file");
@@ -1240,10 +1360,19 @@ mod tests {
         let game_module = GameModule::new(Cursor::new(&zip_bytes[..]))
             .expect("game module creation to be successful");
 
-        assert_eq!(game_module.manifest().info.id, GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB));
+        assert_eq!(
+            game_module.manifest().info.id,
+            GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB)
+        );
         assert_eq!(game_module.manifest().info.name, "test".to_string());
-        assert_eq!(game_module.manifest().info.game_version, GameVersion::from_tuple((1, 0, 0)));
-        assert_eq!(game_module.manifest().info.api_version, ApiVersion::from_u32(1).unwrap());
+        assert_eq!(
+            game_module.manifest().info.game_version,
+            GameVersion::from_tuple((1, 0, 0))
+        );
+        assert_eq!(
+            game_module.manifest().info.api_version,
+            ApiVersion::from_u32(1).unwrap()
+        );
     }
 
     #[test]
@@ -1252,15 +1381,18 @@ mod tests {
 
         let mut zip_bytes = Vec::new();
         {
-            use std::io::{Write, Cursor};
-            use zip::{ZipWriter, write::FileOptions};
+            use std::io::{Cursor, Write};
+            use zip::{write::FileOptions, ZipWriter};
 
             let mut zip = ZipWriter::new(Cursor::new(&mut zip_bytes));
             let options = FileOptions::default();
 
             zip.start_file(GameModule::MANIFEST_NAME, options)
                 .expect("failed to create manifest file");
-            zip.write(br#"
+            // NOTE: Test that additional fields will be ignored for forwards compatibility
+            // purposes
+            zip.write(
+                br#"
                 [info]
                 id = "2A9D41B7763C3ED87B2EAD3FBDF793FB"
                 name = "test"
@@ -1276,7 +1408,9 @@ mod tests {
 
                 [[my_thing]]
                 a = 2
-            "#).expect("failed to write manifest");
+            "#,
+            )
+            .expect("failed to write manifest");
 
             zip.start_file(GameModule::BINARY_NAME, options)
                 .expect("failed to create binary file");
@@ -1288,10 +1422,19 @@ mod tests {
         let game_module = GameModule::new(Cursor::new(&zip_bytes[..]))
             .expect("game module creation to be successful");
 
-        assert_eq!(game_module.manifest().info.id, GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB));
+        assert_eq!(
+            game_module.manifest().info.id,
+            GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB)
+        );
         assert_eq!(game_module.manifest().info.name, "test".to_string());
-        assert_eq!(game_module.manifest().info.game_version, GameVersion::from_tuple((1, 0, 0)));
-        assert_eq!(game_module.manifest().info.api_version, ApiVersion::from_u32(1).unwrap());
+        assert_eq!(
+            game_module.manifest().info.game_version,
+            GameVersion::from_tuple((1, 0, 0))
+        );
+        assert_eq!(
+            game_module.manifest().info.api_version,
+            ApiVersion::from_u32(1).unwrap()
+        );
     }
 
     #[test]
@@ -1300,21 +1443,24 @@ mod tests {
 
         let mut zip_bytes = Vec::new();
         {
-            use std::io::{Write, Cursor};
-            use zip::{ZipWriter, write::FileOptions};
+            use std::io::{Cursor, Write};
+            use zip::{write::FileOptions, ZipWriter};
 
             let mut zip = ZipWriter::new(Cursor::new(&mut zip_bytes));
             let options = FileOptions::default();
 
             zip.start_file(GameModule::MANIFEST_NAME, options)
                 .expect("failed to create manifest file");
-            zip.write(br#"
+            zip.write(
+                br#"
                 [info]
                 id = "2A9D41B7763C3ED87B2EAD3FBDF793FB"
                 name = "test"
                 game_version = "1.0.0"
                 api_version = 5
-            "#).expect("failed to write manifest");
+            "#,
+            )
+            .expect("failed to write manifest");
 
             zip.start_file(GameModule::BINARY_NAME, options)
                 .expect("failed to create binary file");
@@ -1326,9 +1472,15 @@ mod tests {
         let manifest = GameManifest::from_module_file(Cursor::new(&zip_bytes[..]))
             .expect("game module creation to be successful");
 
-        assert_eq!(manifest.info.id, GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB));
+        assert_eq!(
+            manifest.info.id,
+            GameId::from_u128(0x2A9D41B7763C3ED87B2EAD3FBDF793FB)
+        );
         assert_eq!(manifest.info.name, "test".to_string());
-        assert_eq!(manifest.info.game_version, GameVersion::from_tuple((1, 0, 0)));
+        assert_eq!(
+            manifest.info.game_version,
+            GameVersion::from_tuple((1, 0, 0))
+        );
         assert_eq!(manifest.info.api_version, ApiVersion::from_u32(5).unwrap());
     }
 }
