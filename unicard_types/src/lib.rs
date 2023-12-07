@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
-pub use unicard_types_macro::WasmType;
+use unicard_types_macro::WasmType32 as WasmType;
 
 /// An error occurred whilst allocating, reading from, or writing to WASM32 memory.
 ///

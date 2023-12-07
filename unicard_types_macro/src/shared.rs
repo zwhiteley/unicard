@@ -7,7 +7,7 @@ pub fn read_tuple_ctor(fields: &FieldsUnnamed) -> TokenStream {
         let ty = &field.ty;
 
         quote_spanned!(ty.span() =>
-            <#ty as ::unicard_types::WasmType32>::read(&mut *reader)?
+            <#ty as crate::WasmType32>::read(&mut *reader)?
         )
     });
 
@@ -23,7 +23,7 @@ pub fn read_normal_ctor(fields: &FieldsNamed) -> TokenStream {
         let ty = &field.ty;
 
         quote_spanned!(ty.span() =>
-            #name: <#ty as ::unicard_types::WasmType32>::read(&mut *reader)?
+            #name: <#ty as crate::WasmType32>::read(&mut *reader)?
         )
     });
 

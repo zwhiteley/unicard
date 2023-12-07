@@ -9,7 +9,7 @@ mod struct_derive;
 
 mod enum_derive;
 
-#[proc_macro_derive(WasmType)]
+#[proc_macro_derive(WasmType32)]
 pub fn wasm_type_macro(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     proc_macro::TokenStream::from(wasm_type(input))

@@ -1,10 +1,10 @@
-error[E0277]: the trait bound `File: WasmType32` is not satisfied
- --> tests/ui/struct_tuple_test.rs:4:29
+error[E0277]: the trait bound `File: unicard_types::WasmType32` is not satisfied
+ --> tests/ui/struct_tuple_test.rs:5:29
   |
-4 | struct ContainsInvalidTypes(std::fs::File);
-  |                             ^^^^^^^^^^^^^ the trait `WasmType32` is not implemented for `File`
+5 | struct ContainsInvalidTypes(std::fs::File);
+  |                             ^^^^^^^^^^^^^ the trait `unicard_types::WasmType32` is not implemented for `File`
   |
-  = help: the following other types implement trait `WasmType32`:
+  = help: the following other types implement trait `unicard_types::WasmType32`:
             i8
             i16
             i32

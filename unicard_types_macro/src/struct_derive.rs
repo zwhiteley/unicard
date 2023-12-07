@@ -8,7 +8,7 @@ fn wasm_tuple_size(fields: &FieldsUnnamed) -> TokenStream {
         let ty = &field.ty;
 
         quote_spanned!(ty.span() =>
-            .checked_add(<#ty as ::unicard_types::WasmType32>::size(&self.#idx)?)?
+            .checked_add(<#ty as crate::WasmType32>::size(&self.#idx)?)?
         )
     });
 
@@ -21,7 +21,7 @@ fn wasm_tuple_write(fields: &FieldsUnnamed) -> TokenStream {
         let ty = &field.ty;
 
         quote_spanned!(ty.span() =>
-            <#ty as ::unicard_types::WasmType32>::write(&self.#idx, &mut *writer)?;
+            <#ty as crate::WasmType32>::write(&self.#idx, &mut *writer)?;
         )
     });
 
@@ -37,7 +37,7 @@ fn wasm_normal_size(fields: &FieldsNamed) -> TokenStream {
         let ty = &field.ty;
 
         quote_spanned!(ty.span() =>
-            .checked_add(<#ty as ::unicard_types::WasmType32>::size(&self.#ident)?)?
+            .checked_add(<#ty as crate::WasmType32>::size(&self.#ident)?)?
         )
     });
 
@@ -54,7 +54,7 @@ fn wasm_normal_write(fields: &FieldsNamed) -> TokenStream {
         let ty = &field.ty;
 
         quote_spanned!(ty.span() =>
-            <#ty as ::unicard_types::WasmType32>::write(&self.#ident, &mut *writer)?;
+            <#ty as crate::WasmType32>::write(&self.#ident, &mut *writer)?;
         )
     });
 
@@ -66,8 +66,8 @@ pub fn derive(struct_ident: Ident, data_struct: DataStruct) -> TokenStream {
         Fields::Unit => {
             quote!(
                 #[automatically_derived]
-                impl ::unicard_types::WasmType32 for #struct_ident where Self: ::std::marker::Sized {
-                    fn read(_reader: &mut impl ::unicard_types::WasmReader32) -> ::core::result::Result<Self, ::unicard_types::WasmMemoryError32> {
+                impl crate::WasmType32 for #struct_ident where Self: ::std::marker::Sized {
+                    fn read(_reader: &mut impl crate::WasmReader32) -> ::core::result::Result<Self, crate::WasmMemoryError32> {
                         ::core::result::Result::Ok(Self)
                     }
 
@@ -75,7 +75,7 @@ pub fn derive(struct_ident: Ident, data_struct: DataStruct) -> TokenStream {
                         Some(0u32)
                     }
 
-                    fn write(&self, _writer: &mut impl ::unicard_types::WasmWriter32) -> ::core::result::Result<(), ::unicard_types::WasmMemoryError32> {
+                    fn write(&self, _writer: &mut impl crate::WasmWriter32) -> ::core::result::Result<(), crate::WasmMemoryError32> {
                         ::core::result::Result::Ok(())
                     }
                 }
@@ -88,8 +88,8 @@ pub fn derive(struct_ident: Ident, data_struct: DataStruct) -> TokenStream {
 
             quote!(
                 #[automatically_derived]
-                impl ::unicard_types::WasmType32 for #struct_ident where Self: ::std::marker::Sized {
-                    fn read(reader: &mut impl ::unicard_types::WasmReader32) -> ::core::result::Result<Self, ::unicard_types::WasmMemoryError32> {
+                impl crate::WasmType32 for #struct_ident where Self: ::std::marker::Sized {
+                    fn read(reader: &mut impl crate::WasmReader32) -> ::core::result::Result<Self, crate::WasmMemoryError32> {
                         ::core::result::Result::Ok(Self( #constructor ))
                     }
 
@@ -97,7 +97,7 @@ pub fn derive(struct_ident: Ident, data_struct: DataStruct) -> TokenStream {
                         Some(#size_body)
                     }
 
-                    fn write(&self, writer: &mut impl ::unicard_types::WasmWriter32) -> ::core::result::Result<(), ::unicard_types::WasmMemoryError32> {
+                    fn write(&self, writer: &mut impl crate::WasmWriter32) -> ::core::result::Result<(), crate::WasmMemoryError32> {
                         #write_fields
                         ::core::result::Result::Ok(())
                     }
@@ -111,8 +111,8 @@ pub fn derive(struct_ident: Ident, data_struct: DataStruct) -> TokenStream {
 
             quote!(
                 #[automatically_derived]
-                impl ::unicard_types::WasmType32 for #struct_ident where Self: ::std::marker::Sized {
-                    fn read(reader: &mut impl ::unicard_types::WasmReader32) -> ::core::result::Result<Self, ::unicard_types::WasmMemoryError32> {
+                impl crate::WasmType32 for #struct_ident where Self: ::std::marker::Sized {
+                    fn read(reader: &mut impl crate::WasmReader32) -> ::core::result::Result<Self, crate::WasmMemoryError32> {
                         ::core::result::Result::Ok(Self { #constructor })
                     }
 
@@ -120,7 +120,7 @@ pub fn derive(struct_ident: Ident, data_struct: DataStruct) -> TokenStream {
                         Some(#size_body)
                     }
 
-                    fn write(&self, writer: &mut impl ::unicard_types::WasmWriter32) -> ::core::result::Result<(), ::unicard_types::WasmMemoryError32> {
+                    fn write(&self, writer: &mut impl crate::WasmWriter32) -> ::core::result::Result<(), crate::WasmMemoryError32> {
                         #write_body
                         Ok(())
                     }

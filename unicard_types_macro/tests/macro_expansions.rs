@@ -1,5 +1,5 @@
-use unicard_types::{WasmReader32, WasmType32, WasmWriter32};
-use unicard_types_macro::WasmType;
+pub use unicard_types::*;
+use unicard_types_macro::WasmType32 as WasmType;
 
 /// A mock WASM reader/allocator/writer.
 struct Mock {

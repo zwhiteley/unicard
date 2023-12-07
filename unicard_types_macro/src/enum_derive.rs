@@ -192,13 +192,13 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
             });
 
         quote!(
-            let discriminator = <u32 as ::unicard_types::WasmType32>::read(&mut *reader)?;
+            let discriminator = <u32 as crate::WasmType32>::read(&mut *reader)?;
 
             ::core::result::Result::Ok(match discriminator {
                 #(
                     #branches
                 ),*,
-                _ => return ::core::result::Result::Err(::unicard_types::WasmMemoryError32::invalid_value())
+                _ => return ::core::result::Result::Err(crate::WasmMemoryError32::invalid_value())
             })
         )
     };
@@ -212,11 +212,11 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
                 discriminator: u32,
                 iterator: impl Iterator<Item = (Ident, &'a Field)>,
             ) -> TokenStream {
-                let u32_size = quote!(<u32 as ::unicard_types::WasmType32>::size(&#discriminator)?);
+                let u32_size = quote!(<u32 as crate::WasmType32>::size(&#discriminator)?);
                 let sizes = iterator.map(|(ident, field)| {
                     let ty = &field.ty;
                     quote_spanned!(ty.span() =>
-                        .checked_add(<#ty as ::unicard_types::WasmType32>::size(&#ident)?)?
+                        .checked_add(<#ty as crate::WasmType32>::size(&#ident)?)?
                     )
                 });
 
@@ -241,11 +241,12 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
                 discriminator: u32,
                 iterator: impl Iterator<Item = (Ident, &'a Field)>,
             ) -> TokenStream {
-                let write_u32 = quote!(<u32 as ::unicard_types::WasmType32>::write(&#discriminator, &mut *writer)?);
+                let write_u32 =
+                    quote!(<u32 as crate::WasmType32>::write(&#discriminator, &mut *writer)?);
                 let write_stmts = iterator.map(|(ident, field)| {
                     let ty = &field.ty;
                     quote_spanned!(ty.span() =>
-                        <#ty as ::unicard_types::WasmType32>::write(&#ident, &mut *writer)?
+                        <#ty as crate::WasmType32>::write(&#ident, &mut *writer)?
                     )
                 });
 
@@ -263,8 +264,8 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
 
     quote!(
         #[automatically_derived]
-        impl ::unicard_types::WasmType32 for #enum_ident where Self: ::std::marker::Sized {
-            fn read(reader: &mut impl ::unicard_types::WasmReader32) -> ::core::result::Result<Self, ::unicard_types::WasmMemoryError32> {
+        impl crate::WasmType32 for #enum_ident where Self: ::std::marker::Sized {
+            fn read(reader: &mut impl crate::WasmReader32) -> ::core::result::Result<Self, crate::WasmMemoryError32> {
                 #read_body
             }
 
@@ -272,7 +273,7 @@ pub fn derive(enum_ident: Ident, data_enum: DataEnum) -> TokenStream {
                 Some(#size_body)
             }
 
-            fn write(&self, writer: &mut impl ::unicard_types::WasmWriter32) -> ::core::result::Result<(), ::unicard_types::WasmMemoryError32> {
+            fn write(&self, writer: &mut impl crate::WasmWriter32) -> ::core::result::Result<(), crate::WasmMemoryError32> {
                 #write_body
                 ::core::result::Result::Ok(())
             }

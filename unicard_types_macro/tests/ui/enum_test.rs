@@ -1,4 +1,5 @@
-use unicard_types_macro::WasmType;
+pub use unicard_types::*;
+use unicard_types_macro::WasmType32 as WasmType;
 
 #[derive(WasmType)]
 pub enum Test {

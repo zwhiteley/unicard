@@ -1,5 +1,5 @@
 error: WasmType does not support generics
- --> tests/ui/enum_generic_test.rs:4:13
+ --> tests/ui/enum_generic_test.rs:5:13
   |
-4 | pub enum Bar<'a, T> {
+5 | pub enum Bar<'a, T> {
   |             ^
